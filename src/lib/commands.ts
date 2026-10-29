@@ -16,6 +16,8 @@ export const FONTS_DIR = '/fonts';
 
 export interface Clip {
   input: string;
+  /** Stream index of the video track to use. */
+  video: number;
   start: number;
   duration: number;
   height: number;
@@ -89,7 +91,7 @@ export function analysisArgs(clip: Clip, fps: number, layers: TextLayers, featur
     return `[${labels[i]}]${measure}[o${i}]`;
   });
   const outputs = features.flatMap((_, i) => ['-map', `[o${i}]`, '-f', 'null', '-']);
-  return [...BASE, ...seekArgs(clip), '-filter_complex', [`[0:v]${diff}${split}`, ...branches].join(';'), ...outputs];
+  return [...BASE, ...seekArgs(clip), '-filter_complex', [`[0:${clip.video}]${diff}${split}`, ...branches].join(';'), ...outputs];
 }
 
 /**
@@ -98,7 +100,7 @@ export function analysisArgs(clip: Clip, fps: number, layers: TextLayers, featur
  */
 export function encodeArgs(clip: Clip, fps: number, dither: Dither, layers: TextLayers, out: string): string[] {
   const graph =
-    `[0:v]${sourceChain(clip, fps, layers)},split=3[n][a][b];` +
+    `[0:${clip.video}]${sourceChain(clip, fps, layers)},split=3[n][a][b];` +
     `[a]palettegen=stats_mode=diff[p];` +
     `[b][p]paletteuse=${PALETTEUSE[dither]}:diff_mode=rectangle[g]`;
   return [...BASE, '-y', ...seekArgs(clip), '-filter_complex', graph,
@@ -106,15 +108,25 @@ export function encodeArgs(clip: Clip, fps: number, dither: Dither, layers: Text
 }
 
 /** One frame through the real scale + text pipeline, for checking text placement. */
-export function previewFrameArgs(input: string, time: number, height: number, layers: TextLayers, out: string): string[] {
+export function previewFrameArgs(input: string, video: number, time: number, height: number, layers: TextLayers, out: string): string[] {
   const vf = [scaleFilter(height), ...textFilters(time, layers)].join(',');
-  return [...BASE, '-y', '-ss', ffTime(time), '-i', input, '-frames:v', '1', '-vf', vf, out];
+  return [...BASE, '-y', '-ss', ffTime(time), '-i', input, '-map', `0:${video}`, '-frames:v', '1', '-vf', vf, out];
 }
 
-/** A still frame for videos the browser can't play. */
-export function stillFrameArgs(input: string, time: number, height: number, out: string): string[] {
-  return [...BASE, '-y', '-ss', ffTime(time), '-i', input, '-frames:v', '1',
+/** A still frame for videos (or video tracks) the browser can't play. */
+export function stillFrameArgs(input: string, video: number, time: number, height: number, out: string): string[] {
+  return [...BASE, '-y', '-ss', ffTime(time), '-i', input, '-map', `0:${video}`, '-frames:v', '1',
     '-vf', scaleFilter(height), '-q:v', '4', out];
+}
+
+/**
+ * Decode a stretch of one audio track to a small MP3 the browser can always play (used
+ * when it can't play the file's own audio). Mono 32 kHz is plenty for hearing dialogue
+ * and keeps decoding fast.
+ */
+export function audioPreviewArgs(input: string, streamIndex: number, from: number, duration: number, out: string): string[] {
+  return [...BASE, '-y', '-ss', ffTime(from), '-t', ffTime(duration), '-i', input, '-map', `0:${streamIndex}`,
+    '-vn', '-ac', '1', '-ar', '32000', '-c:a', 'libmp3lame', '-b:a', '64k', out];
 }
 
 export function subtitleFile(streamIndex: number): string {

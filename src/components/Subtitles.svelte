@@ -1,51 +1,24 @@
 <script lang="ts">
   import type { Cue } from '../lib/ass';
   import { FONTS } from '../lib/fonts';
-  import { describeTrack } from '../lib/probe';
   import { cueText, DEFAULT_SUBTITLE_STYLE, nearby, overlapping, searchCues } from '../lib/subtitles';
   import { formatTime } from '../lib/time';
-  import { app, clipToCue, controls, extendToCue, loadSubtitles, selectTrack, setCueText } from '../state.svelte';
+  import { app, clipToCue, controls, extendToCue, setCueText } from '../state.svelte';
 
-  const tracks = $derived(app.info?.subtitles ?? []);
-  const textTracks = $derived(tracks.filter((t) => t.text && t.index in app.subtitleTracks));
-  const imageOnly = $derived(tracks.length > 0 && tracks.every((t) => !t.text));
   const inClip = $derived(overlapping(app.cues, app.start, app.end));
 
   let query = $state('');
   const browse = $derived(query.trim() ? searchCues(app.cues, query) : nearby(app.cues, app.current));
   let editing: number | null = $state(null);
 
-  function lineCount(index: number): number {
-    return (app.subtitleTracks[index]?.match(/^\s*Dialogue:/gim) ?? []).length;
-  }
-
   function toggle(cue: Cue, on: boolean) {
     app.disabledCues = on ? app.disabledCues.filter((l) => l !== cue.line) : [...app.disabledCues, cue.line];
   }
 </script>
 
-{#if tracks.length}
+{#if app.track !== null}
   <div class="card">
     <h2>Subtitles</h2>
-
-    {#if imageOnly}
-      <p class="muted note">This video only has image-based subtitles (PGS/VobSub), which can't be read as text yet.</p>
-    {:else if app.subtitleStatus === 'loading'}
-      <p class="muted note">Reading subtitles from the file…</p>
-    {:else if app.subtitleStatus === 'failed'}
-      <p class="warn note">Subtitles weren't read. <button class="small" onclick={loadSubtitles} disabled={!!app.busy}>Read subtitles</button></p>
-    {:else if app.subtitleStatus === 'ready'}
-      <label class="field">
-        Track
-        <select value={app.track ?? ''} onchange={(e) => selectTrack(e.currentTarget.value === '' ? null : Number(e.currentTarget.value))}>
-          <option value="">None</option>
-          {#each textTracks as t}
-            <option value={t.index}>{describeTrack(t)} · {lineCount(t.index)} lines</option>
-          {/each}
-        </select>
-      </label>
-
-      {#if app.track !== null}
         <div class="modes" role="radiogroup" aria-label="Include subtitles in the GIF">
           {#each [['off', 'Leave out'], ['original', 'Original styling'], ['custom', 'My style']] as [value, label]}
             <label class:on={app.subMode === value}>
@@ -127,8 +100,6 @@
             <li class="muted note">No matches.</li>
           {/each}
         </ul>
-      {/if}
-    {/if}
     {#if app.embeddedFonts}
       <p class="muted note">{app.embeddedFonts} embedded font{app.embeddedFonts === 1 ? '' : 's'} loaded.</p>
     {/if}
@@ -147,9 +118,6 @@
   .note {
     font-size: 0.82rem;
     margin: 0.4rem 0 0;
-  }
-  .warn {
-    color: var(--warn);
   }
   .modes {
     display: flex;

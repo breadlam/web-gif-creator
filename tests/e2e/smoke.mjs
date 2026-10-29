@@ -77,7 +77,7 @@ async function runVideo(browser, url, video, index) {
     const subs = page.locator('.card', { hasText: 'Subtitles' });
     if (await subs.locator('.modes').count()) {
       // Subtitles are read on open; clip to the first line near the playhead and use "My style".
-      result.track = await subs.locator('select').first().evaluate((s) => s.selectedOptions[0]?.textContent);
+      result.track = await page.getByLabel('Subtitle track').evaluate((s) => s.selectedOptions[0]?.textContent.trim());
       await subs.locator('.browse li').first().getByRole('button', { name: 'Clip' }).click();
       await subs.locator('.modes label', { hasText: 'My style' }).click();
       result.subtitleLinesInClip = await subs.locator('ul:not(.browse) li').count();

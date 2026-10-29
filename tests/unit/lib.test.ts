@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { assColor, assTime, buildOverlayAss, disableCues, escapeAssText, parseAssCues, plainText, type TextOverlay } from '../../src/lib/ass';
-import { analysisArgs, dumpFontArgs, encodeArgs, extractSubtitlesArgs, scaleFilter, textFilters } from '../../src/lib/commands';
+import { analysisArgs, audioPreviewArgs, dumpFontArgs, encodeArgs, extractSubtitlesArgs, previewFrameArgs, scaleFilter, textFilters } from '../../src/lib/commands';
 import { fontNames, remapMissingFonts } from '../../src/lib/fontNames';
 import { featureValue, parseFrameMetadata, parseFrameProgress, parseTimeProgress } from '../../src/lib/metadata';
-import { outputWidth, parseProbe, type ProbeJson } from '../../src/lib/probe';
+import { defaultAudioTrack, outputWidth, parseProbe, type ProbeJson } from '../../src/lib/probe';
 import { coefsAt, estimateK, frameCount, gifBytes, MODEL, planFps, snapFps } from '../../src/lib/sizeModel';
 import { compactTime, formatTime, parseTime } from '../../src/lib/time';
 import { activeAt, applyOverrides, bestTrack, buildSubtitleAss, DEFAULT_SUBTITLE_STYLE, nearby, overlapping, searchCues } from '../../src/lib/subtitles';
@@ -147,7 +147,10 @@ describe('probe', () => {
     format: { duration: '1450.5' },
     streams: [
       { index: 0, codec_type: 'video', codec_name: 'h264', width: 720, height: 480, sample_aspect_ratio: '32:27', display_aspect_ratio: '16:9', avg_frame_rate: '24000/1001' },
-      { index: 1, codec_type: 'audio', codec_name: 'aac' },
+      { index: 1, codec_type: 'audio', codec_name: 'aac', channels: 2, tags: { language: 'eng' } },
+      { index: 6, codec_type: 'video', codec_name: 'hevc', width: 1920, height: 1080, avg_frame_rate: '30/1', disposition: { default: 0 } },
+      { index: 7, codec_type: 'audio', codec_name: 'ac3', channels: 6, disposition: { default: 1 } },
+      { index: 8, codec_type: 'video', codec_name: 'mjpeg', width: 300, height: 300, disposition: { attached_pic: 1 } },
       { index: 2, codec_type: 'subtitle', codec_name: 'ass', tags: { language: 'eng', title: 'Signs' } },
       { index: 3, codec_type: 'subtitle', codec_name: 'hdmv_pgs_subtitle' },
       { index: 4, codec_type: 'attachment', codec_name: 'ttf', tags: { filename: 'Font.TTF', mimetype: 'application/x-truetype-font' } },
@@ -165,6 +168,16 @@ describe('probe', () => {
     expect(info.unsupported).toBeNull();
   });
 
+  it('lists video and audio tracks, skipping cover art', () => {
+    const info = parseProbe(json);
+    expect(info.videos.map((v) => [v.index, v.codec])).toEqual([[0, 'h264'], [6, 'hevc']]);
+    expect(info.videoIndex).toBe(0);
+    expect(info.audio.map((a) => [a.index, a.codec, a.channels])).toEqual([[1, 'aac', 2], [7, 'ac3', 6]]);
+    expect(defaultAudioTrack(info.audio)).toBe(7);
+    expect(defaultAudioTrack(info.audio.slice(0, 1))).toBe(1);
+    expect(defaultAudioTrack([])).toBeNull();
+  });
+
   it('flags AV1', () => {
     const av1: ProbeJson = { ...json, streams: [{ ...json.streams![0], codec_name: 'av1' }] };
     expect(parseProbe(av1).unsupported).toMatch(/AV1/);
@@ -172,13 +185,13 @@ describe('probe', () => {
 });
 
 describe('commands', () => {
-  const clip = { input: '/input/input.mkv', start: 61.5, duration: 4, height: 540 };
+  const clip = { input: '/input/input.mkv', video: 0, start: 61.5, duration: 4, height: 540 };
 
   it('builds the encode graph used for calibration', () => {
     const args = encodeArgs(clip, 15, 'sierra2_4a', {}, '/work/out.gif');
     const graph = args[args.indexOf('-filter_complex') + 1];
     expect(graph).toBe(
-      `[0:v]${scaleFilter(540)},fps=15,split=3[n][a][b];[a]palettegen=stats_mode=diff[p];` +
+      `[0:0]${scaleFilter(540)},fps=15,split=3[n][a][b];[a]palettegen=stats_mode=diff[p];` +
         '[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle[g]',
     );
     expect(args.slice(0, 10)).toEqual(['-hide_banner', '-loglevel', 'info', '-y', '-ss', '61.500', '-t', '4.000', '-i', '/input/input.mkv']);
@@ -190,7 +203,7 @@ describe('commands', () => {
       'setpts=PTS+61.501/TB', 'subtitles=filename=/work/o.ass:fontsdir=/fonts', 'setpts=PTS-STARTPTS',
     ]);
     // Burned in before fps, while the time base is still fine-grained.
-    const args = encodeArgs({ input: 'in', start: 61.5, duration: 2, height: 540 }, 15, 'bayer', { subtitles: '/work/s.ass' }, 'o.gif');
+    const args = encodeArgs({ input: 'in', video: 0, start: 61.5, duration: 2, height: 540 }, 15, 'bayer', { subtitles: '/work/s.ass' }, 'o.gif');
     expect(args[args.indexOf('-filter_complex') + 1]).toMatch(/setsar=1,setpts=PTS\+61\.501\/TB,subtitles=[^,]+,setpts=PTS-STARTPTS,fps=15,split=3/);
     expect(textFilters(0, {})).toEqual([]);
   });
@@ -204,6 +217,20 @@ describe('commands', () => {
     expect(args.filter((a) => a === 'null')).toHaveLength(2);
     const single = analysisArgs(clip, 15, {}, [{ kind: 'bbox', threshold: 3 }]);
     expect(single[single.indexOf('-filter_complex') + 1]).toMatch(/difference\[f0\];\[f0\]bbox=min_val=3/);
+  });
+
+  it('targets the selected video track explicitly', () => {
+    const args = encodeArgs({ ...clip, video: 6 }, 15, 'sierra2_4a', {}, '/work/out.gif');
+    expect(args[args.indexOf('-filter_complex') + 1]).toMatch(/^\[0:6\]scale=/);
+    const pre = previewFrameArgs('/input/a.mkv', 6, 3, 540, {}, '/work/p.png');
+    expect(pre.slice(pre.indexOf('-map'), pre.indexOf('-map') + 2)).toEqual(['-map', '0:6']);
+  });
+
+  it('decodes an audio window to MP3', () => {
+    expect(audioPreviewArgs('/input/a.mkv', 7, 58, 60, '/work/a.mp3').slice(3)).toEqual([
+      '-y', '-ss', '58.000', '-t', '60.000', '-i', '/input/a.mkv', '-map', '0:7',
+      '-vn', '-ac', '1', '-ar', '32000', '-c:a', 'libmp3lame', '-b:a', '64k', '/work/a.mp3',
+    ]);
   });
 
   it('dumps font attachments by stream index', () => {

@@ -5,7 +5,8 @@ import {
   encodeGif, extractSubtitles, loadFonts, openFile, planClip, previewFrame, stillFrame,
   writeTextLayers, type Job, type Plan,
 } from './lib/pipeline';
-import { outputWidth, type MediaInfo } from './lib/probe';
+import { browserDecodes } from './lib/audioPreview';
+import { defaultAudioTrack, outputWidth, videoFields, type MediaInfo } from './lib/probe';
 import { frameCount, snapFps, type Dither } from './lib/sizeModel';
 import { bestTrack, DEFAULT_SUBTITLE_STYLE, type SubtitleMode, type SubtitleStyle } from './lib/subtitles';
 import { compactTime } from './lib/time';
@@ -61,6 +62,10 @@ export const app = $state({
   playable: true,
   stillUrl: '',
   current: 0,
+  /** Audio stream to hear while trimming. */
+  audioTrack: null as number | null,
+  /** Set when the browser played the video without sound. */
+  nativeAudioFailed: false,
   start: 0,
   end: 0,
   settings: loadSettings(),
@@ -85,7 +90,7 @@ export const app = $state({
   log: [] as string[],
 });
 
-export const playback = $state({ playing: false, loop: true });
+export const playback = $state({ playing: false, loop: true, volume: 1, muted: false, rate: 1 });
 
 /** Registered by Player so other components can drive the video. */
 export const controls = {
@@ -98,11 +103,47 @@ engine.onLog((line) => {
   if (app.log.length > 400) app.log.splice(0, app.log.length - 400);
 });
 
+/**
+ * Whether the <video> element can show the selected video track. Browsers play a file's
+ * first video track only; otherwise the preview uses ffmpeg-rendered stills.
+ */
+export function nativeVideo(): boolean {
+  return app.playable && !!app.info && app.info.videoIndex === app.info.videos[0]?.index;
+}
+
+export function selectVideoTrack(index: number): void {
+  const track = app.info?.videos.find((v) => v.index === index);
+  if (!app.info || !track) return;
+  Object.assign(app.info, videoFields(track));
+  app.plan = null;
+  if (!nativeVideo()) requestStill(app.current);
+}
+
+export type AudioSource = { mode: 'none' } | { mode: 'native' } | { mode: 'ffmpeg'; reason: string };
+
+/**
+ * Where preview sound comes from: the <video> element when the browser can play the
+ * selected track, otherwise ffmpeg-decoded audio (see lib/audioPreview.ts).
+ */
+export function audioSource(): AudioSource {
+  const tracks = app.info?.audio ?? [];
+  const track = tracks.find((t) => t.index === app.audioTrack);
+  if (!track) return { mode: 'none' };
+  if (!nativeVideo()) {
+    return { mode: 'ffmpeg', reason: app.playable ? 'the video track shown is decoded by ffmpeg' : "this browser can't play the file" };
+  }
+  // Browsers play the first audio track and offer no way to switch.
+  if (track.index !== tracks[0].index) return { mode: 'ffmpeg', reason: 'browsers only play the first audio track' };
+  if (!browserDecodes(track.codec)) return { mode: 'ffmpeg', reason: `this browser can't decode ${track.codec.toUpperCase()} audio` };
+  if (app.nativeAudioFailed) return { mode: 'ffmpeg', reason: 'the browser played this file without sound' };
+  return { mode: 'native' };
+}
+
 /** Everything the frame-rate calculation depends on; a plan is stale when this changes. */
 export function planKey(): string {
   const s = app.settings;
   return JSON.stringify([
-    app.input, app.start, app.end, s.maxMB, s.height, s.dither, s.uniform, s.fpsMode, s.manualFps,
+    app.input, app.info?.videoIndex, app.start, app.end, s.maxMB, s.height, s.dither, s.uniform, s.fpsMode, s.manualFps,
     app.track, app.subMode, app.subMode === 'custom' ? s.subtitleStyle : null, app.disabledCues,
     app.cueOverrides, app.overlays,
   ]);
@@ -139,6 +180,7 @@ export async function openVideo(file: File): Promise<void> {
   if (app.videoUrl) URL.revokeObjectURL(app.videoUrl);
   Object.assign(app, {
     file, info: null, input: '', videoUrl: URL.createObjectURL(file), playable: true, stillUrl: '',
+    audioTrack: null, nativeAudioFailed: false,
     subtitleTracks: {}, subtitleStatus: 'none', track: null, cues: [], subMode: 'off', disabledCues: [],
     cueOverrides: {}, plan: null, planKey: '', output: null,
     preview: null, overlays: [], selected: null,
@@ -147,6 +189,7 @@ export async function openVideo(file: File): Promise<void> {
     const { info, input } = await openFile(file);
     app.info = info;
     app.input = input;
+    app.audioTrack = defaultAudioTrack(info.audio);
     app.current = 0;
     app.start = 0;
     app.end = Math.min(info.duration, 5);
@@ -292,7 +335,8 @@ export async function requestStill(time: number): Promise<void> {
     while (stillWanted !== null) {
       const t = stillWanted;
       stillWanted = null;
-      const blob = await stillFrame(app.input, t).catch(() => null);
+      if (!app.info) break;
+      const blob = await stillFrame(app.input, app.info.videoIndex, t).catch(() => null);
       if (!blob) continue;
       if (app.stillUrl) URL.revokeObjectURL(app.stillUrl);
       app.stillUrl = URL.createObjectURL(blob);

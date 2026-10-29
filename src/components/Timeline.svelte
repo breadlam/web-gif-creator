@@ -75,6 +75,9 @@
       case 'l':
         playback.loop = !playback.loop;
         break;
+      case 'm':
+        playback.muted = !playback.muted;
+        break;
       default:
         return;
     }
@@ -159,7 +162,7 @@
     <button class="small" onclick={() => controls.seek(app.current - frame)} title="Previous frame (←)">‹ Frame</button>
     <button class="small" onclick={() => controls.seek(app.current + frame)} title="Next frame (→)">Frame ›</button>
     <button class="small" onclick={() => controls.seek(app.end)}>Go to end</button>
-    <span class="muted keys"><kbd>Space</kbd> play <kbd>←</kbd><kbd>→</kbd> frame (<kbd>Shift</kbd> 1 s) <kbd>I</kbd>/<kbd>O</kbd> set start/end</span>
+    <span class="muted keys"><kbd>Space</kbd> play <kbd>←</kbd><kbd>→</kbd> frame (<kbd>Shift</kbd> 1 s) <kbd>I</kbd>/<kbd>O</kbd> set start/end <kbd>M</kbd> mute</span>
   </div>
 </div>
 

@@ -147,7 +147,7 @@ export interface Job {
 }
 
 function clipOf(job: Job): Clip {
-  return { input: job.input, start: job.start, duration: job.end - job.start, height: job.height };
+  return { input: job.input, video: job.info.videoIndex, start: job.start, duration: job.end - job.start, height: job.height };
 }
 
 /** Measure the size-model features for a clip at a given frame rate. */
@@ -237,9 +237,9 @@ export async function encodeGif(job: Job, fps: number, progress: Progress): Prom
 }
 
 /** Render one frame through the real scale + text pipeline. */
-export async function previewFrame(job: Pick<Job, 'input' | 'height' | 'layers'>, time: number): Promise<Blob> {
+export async function previewFrame(job: Pick<Job, 'input' | 'info' | 'height' | 'layers'>, time: number): Promise<Blob> {
   const out = `${WORK}/preview.png`;
-  const r = await engine.exec(previewFrameArgs(job.input, time, job.height, job.layers, out));
+  const r = await engine.exec(previewFrameArgs(job.input, job.info.videoIndex, time, job.height, job.layers, out));
   if (r.code !== 0) throw new FfmpegError('Rendering the preview frame', r);
   const png = await engine.read(out);
   await engine.remove(out);
@@ -247,9 +247,9 @@ export async function previewFrame(job: Pick<Job, 'input' | 'height' | 'layers'>
 }
 
 /** Still frame for files the browser's <video> element can't play. */
-export async function stillFrame(input: string, time: number, height = 360): Promise<Blob> {
+export async function stillFrame(input: string, video: number, time: number, height = 360): Promise<Blob> {
   const out = `${WORK}/still.jpg`;
-  const r = await engine.exec(stillFrameArgs(input, time, height, out));
+  const r = await engine.exec(stillFrameArgs(input, video, time, height, out));
   if (r.code !== 0) throw new FfmpegError('Rendering a still frame', r);
   const jpg = await engine.read(out);
   await engine.remove(out);

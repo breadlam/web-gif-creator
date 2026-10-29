@@ -1,16 +1,33 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import type { TextOverlay } from '../lib/ass';
+  import { AudioPreview } from '../lib/audioPreview';
   import { font } from '../lib/fonts';
   import { activeAt, cueText, ORIGINAL_PREVIEW_STYLE, overlapping, type SubtitleStyle } from '../lib/subtitles';
   import { formatTime } from '../lib/time';
-  import { app, controls, playback, renderPreview, requestStill } from '../state.svelte';
+  import { app, audioSource, controls, nativeVideo, playback, renderPreview, requestStill } from '../state.svelte';
 
   let video: HTMLVideoElement | undefined = $state();
+  let audio: HTMLAudioElement | undefined = $state();
   let stage: HTMLDivElement | undefined = $state();
   let stageHeight = $state(0);
   /** What is being dragged: a caption (by id) or the subtitle block. */
   let drag: { id: string | null; dx: number; dy: number } | null = null;
+
+  const dar = $derived(app.info?.dar ?? 16 / 9);
+  const duration = $derived(app.info?.duration ?? 0);
+  const showVideo = $derived(nativeVideo());
+  const source = $derived(audioSource());
+  const hasFrameCallback = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+
+  // ffmpeg-decoded sound, for when the browser can't play the selected track.
+  const sound = new AudioPreview();
+  let soundState: '' | 'loading' | string = $state('');
+  let refilling = false;
+  $effect(() => sound.setFile(app.file));
+  $effect(() => {
+    if (audio) sound.attach(audio);
+  });
 
   const included = $derived(app.subMode === 'off' ? [] : app.cues.filter((c) => !app.disabledCues.includes(c.line)));
   const subtitleNow = $derived(activeAt(included, app.current));
@@ -23,25 +40,110 @@
   );
   const subtitleLook = $derived<SubtitleStyle>(app.subMode === 'custom' ? app.settings.subtitleStyle : ORIGINAL_PREVIEW_STYLE);
 
-  const dar = $derived(app.info?.dar ?? 16 / 9);
-  const hasFrameCallback = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+  // Volume, mute and speed apply to whichever element is making the sound.
+  $effect(() => {
+    if (!video) return;
+    video.volume = playback.volume;
+    video.playbackRate = playback.rate;
+    video.muted = playback.muted || source.mode !== 'native';
+  });
+  $effect(() => {
+    if (!audio) return;
+    audio.volume = playback.volume;
+    audio.playbackRate = playback.rate;
+    audio.muted = playback.muted;
+  });
+  // Changing track or sound source mid-playback: stop (resume() restarts where needed).
+  $effect(() => {
+    void app.audioTrack;
+    void source.mode;
+    void app.info?.videoIndex;
+    untrack(stop);
+  });
 
   onMount(() => {
     controls.seek = (t) => {
-      const time = Math.max(0, Math.min(app.info?.duration ?? 0, t));
+      const time = Math.max(0, Math.min(duration, t));
       app.current = time;
-      if (app.playable && video) video.currentTime = time;
-      else requestStill(time);
+      if (showVideo && video) video.currentTime = time;
+      else {
+        if (playback.playing && source.mode === 'ffmpeg') followSound(time);
+        else requestStill(time);
+      }
     };
-    controls.toggle = () => {
-      if (!video || !app.playable) return;
-      if (video.paused) {
-        if (playback.loop && (app.current < app.start || app.current >= app.end)) video.currentTime = app.start;
-        video.play();
-      } else video.pause();
-    };
-    if (!app.playable) requestStill(app.current);
+    controls.toggle = () => (playback.playing ? stop() : start());
+    if (!showVideo) requestStill(app.current);
+    return () => stop();
   });
+
+  async function start() {
+    const loopFrom = playback.loop && (app.current < app.start || app.current >= app.end - 0.05);
+    const from = loopFrom ? app.start : app.current;
+    const ffSound = source.mode === 'ffmpeg' && app.audioTrack !== null;
+    if (!showVideo && !ffSound) return;
+    if (ffSound) {
+      soundState = 'loading';
+      try {
+        await sound.prepare(app.audioTrack!, from, duration);
+        soundState = '';
+      } catch (e) {
+        soundState = `Couldn't decode the sound: ${e instanceof Error ? e.message : e}`;
+      }
+    }
+    if (showVideo && video) {
+      video.currentTime = from;
+      await video.play().catch(() => undefined);
+    } else {
+      app.current = from;
+      playback.playing = true;
+      requestAnimationFrame(clock);
+    }
+    if (ffSound && !soundState) sound.play(from).catch(() => undefined);
+  }
+
+  function stop() {
+    video?.pause();
+    sound.pause();
+    if (!showVideo && playback.playing) requestStill(app.current);
+    playback.playing = false;
+  }
+
+  /** Keep ffmpeg sound with the playhead, loading the next stretch when it runs out. */
+  function followSound(t: number) {
+    if (source.mode !== 'ffmpeg' || app.audioTrack === null || refilling) return;
+    if (sound.sync(app.audioTrack, t)) return;
+    refilling = true;
+    sound.pause();
+    soundState = 'loading';
+    sound
+      .prepare(app.audioTrack, t, duration)
+      .then(() => {
+        soundState = '';
+        if (playback.playing) return sound.play(showVideo && video ? video.currentTime : t);
+      })
+      .catch((e) => (soundState = `Couldn't decode the sound: ${e instanceof Error ? e.message : e}`))
+      .finally(() => (refilling = false));
+  }
+
+  // Without a playable video, the sound drives the playhead; stills follow occasionally.
+  let lastStill = 0;
+  function clock(now: number) {
+    if (!playback.playing || showVideo) return;
+    const t = sound.time();
+    if (!Number.isNaN(t) && !refilling) {
+      app.current = t;
+      if (playback.loop && t >= app.end) {
+        app.current = app.start;
+        if (sound.covers(app.audioTrack!, app.start)) sound.play(app.start);
+        else followSound(app.start);
+      } else if (!sound.covers(app.audioTrack!, t)) followSound(t);
+      if (now - lastStill > 1500) {
+        lastStill = now;
+        requestStill(app.current);
+      }
+    }
+    requestAnimationFrame(clock);
+  }
 
   // Track the displayed frame precisely where requestVideoFrameCallback exists.
   $effect(() => {
@@ -59,6 +161,27 @@
   function onTime(t: number) {
     app.current = t;
     if (playback.loop && playback.playing && video && t >= app.end) video.currentTime = app.start;
+    else if (playback.playing) followSound(t);
+  }
+
+  /**
+   * Some files play without sound even though the codec looks supported (e.g. an
+   * unsupported audio profile). After a moment of playback, check whether any audio was
+   * decoded, and switch to ffmpeg sound if not.
+   */
+  function checkSound() {
+    if (source.mode !== 'native') return;
+    setTimeout(() => {
+      const v = video as (HTMLVideoElement & { webkitAudioDecodedByteCount?: number; mozHasAudio?: boolean }) | undefined;
+      if (!v || v.paused || source.mode !== 'native') return;
+      const silent = typeof v.webkitAudioDecodedByteCount === 'number'
+        ? v.webkitAudioDecodedByteCount === 0
+        : v.mozHasAudio === false;
+      if (!silent) return;
+      // Switching the source stops playback (see the effect above); carry on with ffmpeg sound.
+      app.nativeAudioFailed = true;
+      setTimeout(start, 0);
+    }, 1500);
   }
 
   function failed() {
@@ -105,7 +228,7 @@
 
 <div class="card player">
   <div class="frame" bind:this={stage} bind:clientHeight={stageHeight} style:aspect-ratio={dar} style:--dar={dar}>
-    {#if app.playable}
+    {#if showVideo}
       <!-- svelte-ignore a11y_media_has_caption -->
       <video
         bind:this={video}
@@ -114,7 +237,11 @@
         playsinline
         onerror={failed}
         onplay={() => (playback.playing = true)}
-        onpause={() => (playback.playing = false)}
+        onplaying={checkSound}
+        onpause={() => {
+          playback.playing = false;
+          sound.pause();
+        }}
         ontimeupdate={() => video && !hasFrameCallback && onTime(video.currentTime)}
         onclick={() => controls.toggle()}
       ></video>
@@ -154,18 +281,52 @@
       {/if}
     </div>
   </div>
+  <audio bind:this={audio} preload="auto" hidden></audio>
+
   <div class="row bar">
-    <button onclick={() => controls.toggle()} disabled={!app.playable} title="Play/pause (Space)">
+    <button
+      onclick={() => controls.toggle()}
+      disabled={!showVideo && source.mode !== 'ffmpeg'}
+      title="Play/pause (Space)"
+    >
       {playback.playing ? 'Pause' : 'Play'}
     </button>
-    <label class="row loop"><input type="checkbox" bind:checked={playback.loop} /> Loop selection</label>
-    <span class="mono time">{formatTime(app.current)} / {formatTime(app.info?.duration ?? 0)}</span>
+    <label class="row opt"><input type="checkbox" bind:checked={playback.loop} /> Loop selection</label>
+    <span class="mono time">{formatTime(app.current)} / {formatTime(duration)}</span>
     <button onclick={renderPreview} disabled={!!app.busy} title="Render this frame with ffmpeg, including burned-in text">
       Preview exact frame
     </button>
   </div>
-  {#if !app.playable}
-    <p class="muted note">This browser can't play this file, so the preview shows still frames rendered by ffmpeg.</p>
+  <div class="row bar sound">
+    {#if source.mode === 'none'}
+      <span class="muted">{app.info?.audio.length ? 'Sound off' : 'This video has no audio'}</span>
+    {:else}
+      <button class="small" onclick={() => (playback.muted = !playback.muted)} title="Mute (M)">
+        {playback.muted ? 'Unmute' : 'Mute'}
+      </button>
+      <input type="range" min="0" max="1" step="0.05" bind:value={playback.volume} aria-label="Volume" />
+      <label class="row opt">
+        Speed
+        <select bind:value={playback.rate} aria-label="Playback speed">
+          {#each [0.5, 0.75, 1, 1.25] as r}<option value={r}>{r}×</option>{/each}
+        </select>
+      </label>
+      <span class="muted status">
+        {#if soundState === 'loading'}
+          Decoding sound…
+        {:else if soundState}
+          <span class="warn">{soundState}</span>
+        {:else if source.mode === 'ffmpeg'}
+          Sound decoded by ffmpeg ({source.reason})
+        {/if}
+      </span>
+    {/if}
+  </div>
+  {#if !showVideo}
+    <p class="muted note">
+      {app.playable ? 'The browser can only show the first video track,' : "This browser can't play this file,"}
+      so the preview shows still frames rendered by ffmpeg.
+    </p>
   {/if}
   {#if app.preview}
     <div class="exact">
@@ -239,9 +400,21 @@
     margin-left: auto;
     font-size: 0.9rem;
   }
-  .loop {
+  .opt {
     gap: 0.3rem;
     font-size: 0.9rem;
+  }
+  .sound {
+    font-size: 0.85rem;
+  }
+  .sound input[type='range'] {
+    width: 90px;
+  }
+  .status {
+    font-size: 0.82rem;
+  }
+  .warn {
+    color: var(--warn);
   }
   .note {
     margin: 0;

@@ -8,6 +8,7 @@
   import Settings from './components/Settings.svelte';
   import Subtitles from './components/Subtitles.svelte';
   import Timeline from './components/Timeline.svelte';
+  import Tracks from './components/Tracks.svelte';
   import { engine } from './lib/engine';
   import { app, cancel, openVideo, saveSettings } from './state.svelte';
 
@@ -61,9 +62,12 @@
 {#if !app.info}
   <DropZone />
 {:else if app.info.unsupported}
-  <div class="card unsupported">
-    <h2>Can't decode this video</h2>
-    <p>{app.info.unsupported}</p>
+  <div class="unsupported">
+    <div class="card">
+      <h2>Can't decode this video</h2>
+      <p>{app.info.unsupported}</p>
+    </div>
+    {#if app.info.videos.length > 1}<Tracks />{/if}
   </div>
 {:else}
   <main>
@@ -73,6 +77,7 @@
       <Overlays />
     </section>
     <aside>
+      <Tracks />
       <Settings />
       <Subtitles />
       <Output />
@@ -165,5 +170,7 @@
   .unsupported {
     margin: 2rem auto;
     max-width: 640px;
+    display: grid;
+    gap: 1rem;
   }
 </style>

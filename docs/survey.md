@@ -37,6 +37,7 @@ Browser main thread (Svelte UI)
 | Module | Role |
 |---|---|
 | `src/lib/engine.ts` | ffmpeg.wasm wrapper: serialised ops, WORKERFS input, cancel (terminate) with transparent reload |
+| `src/lib/audioPreview.ts` | preview sound via a second ffmpeg instance when the browser can't play the selected audio |
 | `src/lib/pipeline.ts` | open/probe, fonts, subtitle extraction, analysis, planning, encode, preview frames |
 | `src/lib/commands.ts` | every ffmpeg argument list; the GIF chain must match the calibrator |
 | `src/lib/sizeModel.ts` + `sizeModel.json` | the frame-rate calculation (§4) |
@@ -147,6 +148,12 @@ Working (verified end-to-end in Chromium with the real ffmpeg.wasm):
 - open MP4/MKV/WebM, probe, AV1 detection
 - trim UI with frame stepping and shortcuts
 - size budget, height and dither settings; calculated or fixed frame rate with even-timing option
+- track selection for video, audio (for listening) and subtitles; every ffmpeg command
+  targets the selected video stream explicitly
+- sound while trimming: the browser's own when it can play the selected track, otherwise a
+  second ffmpeg.wasm instance decodes about 60 s around the playhead to MP3, kept in sync
+  (so it never waits behind analysis or encoding); a silent-playback check switches over
+  automatically; volume, mute, speed
 - subtitles read on open (ASS and SRT tested), automatic dialogue-track choice, lines on the
   preview, search with Clip/Extend, original styling (embedded fonts) or a draggable custom
   style, per-line toggles and edits

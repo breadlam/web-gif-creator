@@ -4,7 +4,10 @@ Turn video clips into high-quality GIFs in the browser, sized to fit a file-size
 Everything runs locally with [ffmpeg.wasm](https://github.com/ffmpegwasm/ffmpeg.wasm); the
 video is never uploaded. Deploys as a static site to GitHub Pages.
 
-- Trim with a timeline, frame stepping and keyboard shortcuts.
+- Trim with a timeline, frame stepping and keyboard shortcuts, with sound (volume, mute,
+  0.5×–1.25× speed). If the browser can't play the file's audio (AC-3/DTS, a second audio
+  track, files it can't play at all), ffmpeg decodes the sound instead.
+- Choose which video, audio and subtitle track to work with.
 - Set a max file size (default 20 MB) and height (default 540p). The frame rate is
   *calculated* from one quick analysis pass, not found by trial encodes.
 - ffmpeg's `palettegen` → `paletteuse` pipeline, with a choice of dithering.
