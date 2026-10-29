@@ -41,7 +41,9 @@ budgets for `k × margin`, where the margin is the 90th percentile of actual/pre
 ```
 
 - Each source contributes 8 clips of 6 s. Each clip is encoded at 3 heights × 3 frame rates
-  × 4 dither modes, and every feature is measured.
+  × 11 dither settings (sierra2_4a, sierra2, floyd_steinberg, heckbert, none, and Bayer at
+  `bayer_scale` 0–5), and every feature is measured. That is 3,960 encodes, about 3 minutes
+  on a large machine.
 - `--prep-ffmpeg` (default: `ffmpeg` on PATH) decodes sources into lossless scaled clips.
   It needs a decoder for every source codec (FFmpeg 5.1.4 without dav1d can't decode AV1).
 - Results are cached in `.cache/work`, so re-running only refits.
@@ -58,6 +60,10 @@ results for the default sierra2_4a at all heights:
 |---|---|
 | Average budget use | 74% |
 | Held-out clips over budget | 20% (worst 15% over) |
+
+The other modes use 55–69% of the budget on average, with about a fifth of held-out clips
+over it. Bayer is the least predictable at higher scales: up to 43% over at `bayer_scale`
+3–5.
 
 Per-clip error is large in both directions. Two effects are not captured:
 

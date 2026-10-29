@@ -146,6 +146,14 @@ or allow a one-frame encode as a complexity measurement. That cut the over-budge
 Working (verified end-to-end in Chromium with the real ffmpeg.wasm):
 
 - open MP4/MKV/WebM, probe, AV1 detection
+- free-form values everywhere, with presets as shortcuts:
+  - linked width/height fields (any even size; notes for upscaling and outside the
+    calibrated 360–720p range)
+  - max size, a fixed frame rate (decimals; mixed delays when even timing is off), and every
+    paletteuse dithering mode including `bayer_scale`
+  - caption/subtitle size and outline, and playback speed
+  - fonts: bundled, embedded in the video, or user-added files (family, weight and libass
+    size metrics read from the file)
 - trim UI with frame stepping and shortcuts
 - size budget, height and dither settings; calculated or fixed frame rate with even-timing option
 - track selection for video, audio (for listening) and subtitles; every ffmpeg command

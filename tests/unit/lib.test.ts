@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { assColor, assTime, buildOverlayAss, disableCues, escapeAssText, parseAssCues, plainText, type TextOverlay } from '../../src/lib/ass';
 import { analysisArgs, audioPreviewArgs, dumpFontArgs, encodeArgs, extractSubtitlesArgs, previewFrameArgs, scaleFilter, textFilters } from '../../src/lib/commands';
-import { fontNames, remapMissingFonts } from '../../src/lib/fontNames';
+import { fontInfo, fontNames, remapMissingFonts } from '../../src/lib/fontNames';
 import { featureValue, parseFrameMetadata, parseFrameProgress, parseTimeProgress } from '../../src/lib/metadata';
 import { defaultAudioTrack, outputWidth, parseProbe, type ProbeJson } from '../../src/lib/probe';
-import { coefsAt, estimateK, frameCount, gifBytes, MODEL, planFps, snapFps } from '../../src/lib/sizeModel';
+import { coefsAt, estimateK, frameCount, gifBytes, MODEL, modelFor, modelKey, paletteuseDither, planFps, snapFps } from '../../src/lib/sizeModel';
 import { compactTime, formatTime, parseTime } from '../../src/lib/time';
 import { activeAt, applyOverrides, bestTrack, buildSubtitleAss, DEFAULT_SUBTITLE_STYLE, nearby, overlapping, searchCues } from '../../src/lib/subtitles';
 
@@ -27,8 +27,8 @@ describe('size model', () => {
     const hs = Object.keys(MODEL.models.sierra2_4a.coefsByHeight).map(Number).sort((a, b) => a - b);
     const lo = MODEL.models.sierra2_4a.coefsByHeight[hs[0]][0];
     const hi = MODEL.models.sierra2_4a.coefsByHeight[hs[1]][0];
-    expect(coefsAt('sierra2_4a', (hs[0] + hs[1]) / 2)[0]).toBeCloseTo((lo + hi) / 2);
-    expect(coefsAt('sierra2_4a', 100)[0]).toBe(lo);
+    expect(coefsAt({ mode: 'sierra2_4a', bayerScale: 2 } as const, (hs[0] + hs[1]) / 2)[0]).toBeCloseTo((lo + hi) / 2);
+    expect(coefsAt({ mode: 'sierra2_4a', bayerScale: 2 } as const, 100)[0]).toBe(lo);
   });
 
   it('snaps to uniform centisecond delays', () => {
@@ -54,6 +54,17 @@ describe('size model', () => {
     expect(p.fps).toBe(20);
   });
 
+  it('has a calibrated model for every dithering mode and Bayer scale', () => {
+    for (const mode of ['sierra2_4a', 'sierra2', 'floyd_steinberg', 'heckbert', 'none'] as const) {
+      expect(MODEL.models[modelKey({ mode, bayerScale: 2 })]).toBeDefined();
+    }
+    for (let n = 0; n <= 5; n++) expect(modelKey({ mode: 'bayer', bayerScale: n })).toBe(`bayer${n}`);
+    expect(modelKey({ mode: 'bayer', bayerScale: 9 })).toBe('bayer5');
+    expect(modelFor({ mode: 'bayer', bayerScale: 0 })).toBe(MODEL.models.bayer0);
+    expect(paletteuseDither({ mode: 'bayer', bayerScale: 4 })).toBe('dither=bayer:bayer_scale=4');
+    expect(paletteuseDither({ mode: 'heckbert', bayerScale: 4 })).toBe('dither=heckbert');
+  });
+
   it('counts frames like the fps filter', () => {
     expect(frameCount(10, 15)).toBe(150);
     expect(frameCount(0.01, 15)).toBe(1);
@@ -62,7 +73,7 @@ describe('size model', () => {
   it('estimates k from features', () => {
     const m = MODEL.models.sierra2_4a;
     const values = Object.fromEntries(m.features.map((f) => [`${f.kind}${f.threshold}`, 0.5]));
-    const k = estimateK('sierra2_4a', 540, values);
+    const k = estimateK({ mode: 'sierra2_4a', bayerScale: 2 } as const, 540, values);
     expect(k.safe).toBeCloseTo(k.expected * m.margin);
     expect(k.expected).toBeGreaterThan(0.1);
   });
@@ -188,7 +199,7 @@ describe('commands', () => {
   const clip = { input: '/input/input.mkv', video: 0, start: 61.5, duration: 4, height: 540 };
 
   it('builds the encode graph used for calibration', () => {
-    const args = encodeArgs(clip, 15, 'sierra2_4a', {}, '/work/out.gif');
+    const args = encodeArgs(clip, 15, { mode: 'sierra2_4a', bayerScale: 2 } as const, {}, '/work/out.gif');
     const graph = args[args.indexOf('-filter_complex') + 1];
     expect(graph).toBe(
       `[0:0]${scaleFilter(540)},fps=15,split=3[n][a][b];[a]palettegen=stats_mode=diff[p];` +
@@ -203,7 +214,7 @@ describe('commands', () => {
       'setpts=PTS+61.501/TB', 'subtitles=filename=/work/o.ass:fontsdir=/fonts', 'setpts=PTS-STARTPTS',
     ]);
     // Burned in before fps, while the time base is still fine-grained.
-    const args = encodeArgs({ input: 'in', video: 0, start: 61.5, duration: 2, height: 540 }, 15, 'bayer', { subtitles: '/work/s.ass' }, 'o.gif');
+    const args = encodeArgs({ input: 'in', video: 0, start: 61.5, duration: 2, height: 540 }, 15, { mode: 'bayer', bayerScale: 2 }, { subtitles: '/work/s.ass' }, 'o.gif');
     expect(args[args.indexOf('-filter_complex') + 1]).toMatch(/setsar=1,setpts=PTS\+61\.501\/TB,subtitles=[^,]+,setpts=PTS-STARTPTS,fps=15,split=3/);
     expect(textFilters(0, {})).toEqual([]);
   });
@@ -220,7 +231,7 @@ describe('commands', () => {
   });
 
   it('targets the selected video track explicitly', () => {
-    const args = encodeArgs({ ...clip, video: 6 }, 15, 'sierra2_4a', {}, '/work/out.gif');
+    const args = encodeArgs({ ...clip, video: 6 }, 15, { mode: 'sierra2_4a', bayerScale: 2 } as const, {}, '/work/out.gif');
     expect(args[args.indexOf('-filter_complex') + 1]).toMatch(/^\[0:6\]scale=/);
     const pre = previewFrameArgs('/input/a.mkv', 6, 3, 540, {}, '/work/p.png');
     expect(pre.slice(pre.indexOf('-map'), pre.indexOf('-map') + 2)).toEqual(['-map', '0:6']);
@@ -319,5 +330,18 @@ describe('subtitle extraction command', () => {
       '-map', '0:3', '-c:s', 'copy', '/work/track-3.ass',
       '-map', '0:4', '-c:s', 'ass', '/work/track-4.ass',
     ]);
+  });
+});
+
+describe('font info', () => {
+  it('reads family, weight and libass size ratio from a font file', async () => {
+    const { readFileSync } = await import('node:fs');
+    const bold = fontInfo(new Uint8Array(readFileSync('public/fonts/NotoSans-Bold.ttf')));
+    expect(bold).toMatchObject({ family: 'Noto Sans', bold: true });
+    expect(bold!.cssPerAss).toBeCloseTo(0.6583, 3);
+    const anton = fontInfo(new Uint8Array(readFileSync('public/fonts/Anton-Regular.ttf')));
+    expect(anton).toMatchObject({ family: 'Anton', bold: false });
+    expect(anton!.cssPerAss).toBeCloseTo(0.5769, 3);
+    expect(fontInfo(new Uint8Array(16))).toBeNull();
   });
 });

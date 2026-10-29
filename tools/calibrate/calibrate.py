@@ -28,10 +28,14 @@ import sys
 import time
 from pathlib import Path
 
+# Every paletteuse dithering mode in FFmpeg 5.1.4. Bayer is calibrated per bayer_scale,
+# since the pattern strength changes how well frames compress.
 DITHERS = {
     "sierra2_4a": "dither=sierra2_4a",
+    "sierra2": "dither=sierra2",
     "floyd_steinberg": "dither=floyd_steinberg",
-    "bayer": "dither=bayer:bayer_scale=2",
+    "heckbert": "dither=heckbert",
+    **{f"bayer{n}": f"dither=bayer:bayer_scale={n}" for n in range(6)},
     "none": "dither=none",
 }
 FEATURES = [("bbox", 0), ("bbox", 1), ("bbox", 3), ("bbox", 8), ("changed", 1), ("changed", 3)]

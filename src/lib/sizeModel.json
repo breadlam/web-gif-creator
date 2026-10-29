@@ -35,6 +35,32 @@
         "worstOverBudget": 0.155
       }
     },
+    "sierra2": {
+      "features": [
+        {
+          "kind": "bbox",
+          "threshold": 1
+        }
+      ],
+      "coefsByHeight": {
+        "360": [
+          0.4529
+        ],
+        "540": [
+          0.4121
+        ],
+        "720": [
+          0.3862
+        ]
+      },
+      "margin": 1.49,
+      "heldOut": {
+        "meanErr": 1.199,
+        "utilization": 0.628,
+        "overBudget": 0.172,
+        "worstOverBudget": 0.215
+      }
+    },
     "floyd_steinberg": {
       "features": [
         {
@@ -61,7 +87,85 @@
         "worstOverBudget": 0.163
       }
     },
-    "bayer": {
+    "heckbert": {
+      "features": [
+        {
+          "kind": "bbox",
+          "threshold": 0
+        }
+      ],
+      "coefsByHeight": {
+        "360": [
+          0.4794
+        ],
+        "540": [
+          0.4498
+        ],
+        "720": [
+          0.4364
+        ]
+      },
+      "margin": 1.42,
+      "heldOut": {
+        "meanErr": 0.873,
+        "utilization": 0.686,
+        "overBudget": 0.172,
+        "worstOverBudget": 0.161
+      }
+    },
+    "bayer0": {
+      "features": [
+        {
+          "kind": "bbox",
+          "threshold": 0
+        }
+      ],
+      "coefsByHeight": {
+        "360": [
+          0.4594
+        ],
+        "540": [
+          0.4425
+        ],
+        "720": [
+          0.4341
+        ]
+      },
+      "margin": 1.64,
+      "heldOut": {
+        "meanErr": 2.018,
+        "utilization": 0.6,
+        "overBudget": 0.175,
+        "worstOverBudget": 0.155
+      }
+    },
+    "bayer1": {
+      "features": [
+        {
+          "kind": "bbox",
+          "threshold": 0
+        }
+      ],
+      "coefsByHeight": {
+        "360": [
+          0.4636
+        ],
+        "540": [
+          0.4449
+        ],
+        "720": [
+          0.4358
+        ]
+      },
+      "margin": 1.7,
+      "heldOut": {
+        "meanErr": 2.074,
+        "utilization": 0.579,
+        "overBudget": 0.225,
+        "worstOverBudget": 0.223
+      }
+    },
+    "bayer2": {
       "features": [
         {
           "kind": "bbox",
@@ -85,6 +189,84 @@
         "utilization": 0.553,
         "overBudget": 0.208,
         "worstOverBudget": 0.378
+      }
+    },
+    "bayer3": {
+      "features": [
+        {
+          "kind": "bbox",
+          "threshold": 1
+        }
+      ],
+      "coefsByHeight": {
+        "360": [
+          0.4745
+        ],
+        "540": [
+          0.4417
+        ],
+        "720": [
+          0.4203
+        ]
+      },
+      "margin": 1.65,
+      "heldOut": {
+        "meanErr": 1.707,
+        "utilization": 0.559,
+        "overBudget": 0.206,
+        "worstOverBudget": 0.432
+      }
+    },
+    "bayer4": {
+      "features": [
+        {
+          "kind": "bbox",
+          "threshold": 0
+        }
+      ],
+      "coefsByHeight": {
+        "360": [
+          0.4126
+        ],
+        "540": [
+          0.3818
+        ],
+        "720": [
+          0.3634
+        ]
+      },
+      "margin": 1.79,
+      "heldOut": {
+        "meanErr": 2.151,
+        "utilization": 0.547,
+        "overBudget": 0.208,
+        "worstOverBudget": 0.434
+      }
+    },
+    "bayer5": {
+      "features": [
+        {
+          "kind": "bbox",
+          "threshold": 0
+        }
+      ],
+      "coefsByHeight": {
+        "360": [
+          0.3972
+        ],
+        "540": [
+          0.3631
+        ],
+        "720": [
+          0.343
+        ]
+      },
+      "margin": 1.78,
+      "heldOut": {
+        "meanErr": 2.05,
+        "utilization": 0.555,
+        "overBudget": 0.197,
+        "worstOverBudget": 0.414
       }
     },
     "none": {

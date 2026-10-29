@@ -6,6 +6,7 @@
   import { activeAt, cueText, ORIGINAL_PREVIEW_STYLE, overlapping, type SubtitleStyle } from '../lib/subtitles';
   import { formatTime } from '../lib/time';
   import { app, audioSource, controls, nativeVideo, playback, renderPreview, requestStill } from '../state.svelte';
+  import NumberField from './NumberField.svelte';
 
   let video: HTMLVideoElement | undefined = $state();
   let audio: HTMLAudioElement | undefined = $state();
@@ -298,6 +299,18 @@
     </button>
   </div>
   <div class="row bar sound">
+    <span class="row opt">
+      Speed
+      <NumberField
+        label="Playback speed"
+        bind:value={playback.rate}
+        min={0.25}
+        max={4}
+        suffix="×"
+        size={4}
+        presets={[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2].map((v) => ({ value: v, label: `${v}×` }))}
+      />
+    </span>
     {#if source.mode === 'none'}
       <span class="muted">{app.info?.audio.length ? 'Sound off' : 'This video has no audio'}</span>
     {:else}
@@ -305,12 +318,6 @@
         {playback.muted ? 'Unmute' : 'Mute'}
       </button>
       <input type="range" min="0" max="1" step="0.05" bind:value={playback.volume} aria-label="Volume" />
-      <label class="row opt">
-        Speed
-        <select bind:value={playback.rate} aria-label="Playback speed">
-          {#each [0.5, 0.75, 1, 1.25] as r}<option value={r}>{r}×</option>{/each}
-        </select>
-      </label>
       <span class="muted status">
         {#if soundState === 'loading'}
           Decoding sound…

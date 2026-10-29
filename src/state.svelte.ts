@@ -1,20 +1,24 @@
 import type { Cue, TextOverlay } from './lib/ass';
 import { parseAssCues } from './lib/ass';
 import { Cancelled, engine } from './lib/engine';
+import { fontInfo } from './lib/fontNames';
+import { allFonts, registerFont, unregisterFonts, type FontChoice, type FontId } from './lib/fonts';
 import {
-  encodeGif, extractSubtitles, loadFonts, openFile, planClip, previewFrame, stillFrame,
+  addFontFile, encodeGif, extractSubtitles, loadFonts, openFile, planClip, previewFrame, stillFrame,
   writeTextLayers, type Job, type Plan,
 } from './lib/pipeline';
 import { browserDecodes } from './lib/audioPreview';
 import { defaultAudioTrack, outputWidth, videoFields, type MediaInfo } from './lib/probe';
-import { frameCount, snapFps, type Dither } from './lib/sizeModel';
+import { frameCount, snapFps, type DitherMode } from './lib/sizeModel';
 import { bestTrack, DEFAULT_SUBTITLE_STYLE, type SubtitleMode, type SubtitleStyle } from './lib/subtitles';
 import { compactTime } from './lib/time';
 
 export interface Settings {
   maxMB: number;
   height: number;
-  dither: Dither;
+  dither: DitherMode;
+  /** Bayer pattern strength 0–5, used when dither is 'bayer'. */
+  bayerScale: number;
   fpsMode: 'auto' | 'manual';
   manualFps: number;
   uniform: boolean;
@@ -22,7 +26,7 @@ export interface Settings {
 }
 
 const DEFAULTS: Settings = {
-  maxMB: 20, height: 540, dither: 'sierra2_4a', fpsMode: 'auto', manualFps: 15, uniform: true,
+  maxMB: 20, height: 540, dither: 'sierra2_4a', bayerScale: 2, fpsMode: 'auto', manualFps: 15, uniform: true,
   subtitleStyle: { ...DEFAULT_SUBTITLE_STYLE },
 };
 const SETTINGS_KEY = 'web-gif-creator.settings';
@@ -78,7 +82,10 @@ export const app = $state({
   disabledCues: [] as number[],
   cueOverrides: {} as Record<number, string>,
   embeddedFonts: 0,
+  /** Every name libass can match a loaded font by (bundled, embedded, added). */
   fontNames: [] as string[],
+  /** Fonts to offer for captions and subtitle styling (mirrors lib/fonts' registry). */
+  fontChoices: [...allFonts()] as FontChoice[],
   overlays: [] as TextOverlay[],
   selected: null as string | null,
   plan: null as Plan | null,
@@ -143,7 +150,7 @@ export function audioSource(): AudioSource {
 export function planKey(): string {
   const s = app.settings;
   return JSON.stringify([
-    app.input, app.info?.videoIndex, app.start, app.end, s.maxMB, s.height, s.dither, s.uniform, s.fpsMode, s.manualFps,
+    app.input, app.info?.videoIndex, app.start, app.end, s.maxMB, s.height, s.dither, s.bayerScale, s.uniform, s.fpsMode, s.manualFps,
     app.track, app.subMode, app.subMode === 'custom' ? s.subtitleStyle : null, app.disabledCues,
     app.cueOverrides, app.overlays,
   ]);
@@ -195,9 +202,12 @@ export async function openVideo(file: File): Promise<void> {
     app.end = Math.min(info.duration, 5);
     if (info.unsupported) return;
     progress(null, 'Loading fonts');
+    unregisterFonts('embedded');
     const fonts = await loadFonts(input, info);
     app.embeddedFonts = fonts.embedded;
-    app.fontNames = fonts.names;
+    app.fontNames = [...fonts.names, ...addedFontNames];
+    for (const bytes of fonts.files) registerFontBytes(bytes, 'embedded');
+    app.fontChoices = [...allFonts()];
   });
   if (app.info?.subtitles.some((t) => t.text) && !app.info.unsupported) await loadSubtitles();
 }
@@ -268,7 +278,7 @@ async function job(range: [number, number] = [app.start, app.end]): Promise<Job>
     start: app.start,
     end: app.end,
     height,
-    dither: app.settings.dither,
+    dither: { mode: app.settings.dither, bayerScale: app.settings.bayerScale },
     layers,
   };
 }
@@ -344,6 +354,57 @@ export async function requestStill(time: number): Promise<void> {
   } finally {
     stillBusy = false;
   }
+}
+
+let fontCounter = 0;
+const addedFontNames: string[] = [];
+
+/**
+ * Offer a font for captions: register it with the browser (for the preview) and in the
+ * font list. Returns its id, or null if the file isn't a readable font. A font with the
+ * same family and weight as one already listed isn't listed twice.
+ */
+function registerFontBytes(bytes: Uint8Array, source: 'embedded' | 'added'): FontId | null {
+  const info = fontInfo(bytes);
+  if (!info) return null;
+  const existing = allFonts().find((f) => f.family === info.family && f.bold === info.bold);
+  if (existing) return existing.id;
+  const n = ++fontCounter;
+  const css = `wgc-font-${n}`;
+  try {
+    const face = new FontFace(css, bytes.slice().buffer, { weight: info.bold ? '700' : '400' });
+    document.fonts.add(face);
+    face.load().catch(() => undefined);
+  } catch {
+    // The preview falls back to a default font; libass still uses the real one.
+  }
+  const choice: FontChoice = {
+    id: `${source}-${n}`,
+    label: `${info.fullName}${source === 'embedded' ? ' (in video)' : ''}`,
+    family: info.family,
+    bold: info.bold,
+    css,
+    cssPerAss: info.cssPerAss,
+    source,
+  };
+  registerFont(choice);
+  return choice.id;
+}
+
+/** Add a font file chosen by the user. Returns the new font's id. */
+export async function addUserFont(file: File): Promise<FontId | null> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (!fontInfo(bytes)) {
+    app.error = `${file.name} isn't a font file this app can read (use TTF, OTF or TTC).`;
+    return null;
+  }
+  const ext = /\.(ttf|otf|ttc)$/i.exec(file.name)?.[0].toLowerCase() ?? '.ttf';
+  const names = await addFontFile(bytes, `added-${fontCounter + 1}${ext}`);
+  addedFontNames.push(...names);
+  app.fontNames = [...app.fontNames, ...names];
+  const id = registerFontBytes(bytes, 'added');
+  app.fontChoices = [...allFonts()];
+  return id;
 }
 
 let overlayCounter = 0;

@@ -10,7 +10,14 @@ import raw from './sizeModel.json';
  * by one cheap ffmpeg pass over the clip (see commands.ts: analysisArgs).
  */
 
-export type Dither = 'sierra2_4a' | 'floyd_steinberg' | 'bayer' | 'none';
+/** paletteuse dithering modes in FFmpeg 5.1.4. */
+export type DitherMode = 'sierra2_4a' | 'sierra2' | 'floyd_steinberg' | 'heckbert' | 'bayer' | 'none';
+
+export interface Dither {
+  mode: DitherMode;
+  /** Bayer pattern strength, 0–5 (paletteuse bayer_scale); only used by 'bayer'. */
+  bayerScale: number;
+}
 export type FeatureKind = 'bbox' | 'changed';
 
 export interface Feature {
@@ -30,17 +37,35 @@ interface ModelFile {
   statsMode: string;
   clips: number;
   sources: number;
-  models: Record<Dither, DitherModel>;
+  /** Keyed by modelKey(): the mode, with Bayer split per scale (bayer0 … bayer5). */
+  models: Record<string, DitherModel>;
 }
 
 export const MODEL = raw as ModelFile;
 
-export const DITHERS: { id: Dither; label: string }[] = [
+export const DITHERS: { id: DitherMode; label: string }[] = [
   { id: 'sierra2_4a', label: 'Sierra 2-4A (ffmpeg default)' },
+  { id: 'sierra2', label: 'Sierra 2' },
   { id: 'floyd_steinberg', label: 'Floyd–Steinberg' },
+  { id: 'heckbert', label: 'Heckbert' },
   { id: 'bayer', label: 'Bayer (ordered)' },
   { id: 'none', label: 'None' },
 ];
+
+export function modelKey(d: Dither): string {
+  return d.mode === 'bayer' ? `bayer${Math.round(Math.min(5, Math.max(0, d.bayerScale)))}` : d.mode;
+}
+
+/** The paletteuse options for a dithering choice. */
+export function paletteuseDither(d: Dither): string {
+  return d.mode === 'bayer' ? `dither=bayer:bayer_scale=${Math.round(Math.min(5, Math.max(0, d.bayerScale)))}` : `dither=${d.mode}`;
+}
+
+/** Output heights the size model was calibrated at; others are interpolated or clamped. */
+export function calibratedHeights(): [number, number] {
+  const hs = Object.keys(MODEL.models.sierra2_4a.coefsByHeight).map(Number);
+  return [Math.min(...hs), Math.max(...hs)];
+}
 
 export const FILE_OVERHEAD = 1024; // header, global palette, loop extension, trailer
 export const FRAME_OVERHEAD = 24; // graphic control ext, image descriptor, LZW framing
@@ -51,7 +76,7 @@ export function featureKey(f: Feature): string {
 }
 
 export function modelFor(dither: Dither): DitherModel {
-  return MODEL.models[dither];
+  return MODEL.models[modelKey(dither)] ?? MODEL.models.sierra2_4a;
 }
 
 /** Coefficients at an output height, interpolated linearly between calibrated heights. */

@@ -1,7 +1,7 @@
 // ffmpeg argument builders. The GIF chain must stay identical to
 // tools/calibrate/calibrate.py, or the size model no longer applies.
 import type { Dither, Feature } from './sizeModel';
-import { featureKey } from './sizeModel';
+import { featureKey, paletteuseDither } from './sizeModel';
 import { ffTime } from './time';
 
 export const WORK = '/work';
@@ -28,13 +28,6 @@ export interface TextLayers {
   subtitles?: string;
   overlays?: string;
 }
-
-const PALETTEUSE: Record<Dither, string> = {
-  sierra2_4a: 'dither=sierra2_4a',
-  floyd_steinberg: 'dither=floyd_steinberg',
-  bayer: 'dither=bayer:bayer_scale=2',
-  none: 'dither=none',
-};
 
 export function scaleFilter(height: number): string {
   return `scale=w='trunc(${height}*dar/2)*2':h=${height}:flags=lanczos,setsar=1`;
@@ -102,7 +95,7 @@ export function encodeArgs(clip: Clip, fps: number, dither: Dither, layers: Text
   const graph =
     `[0:${clip.video}]${sourceChain(clip, fps, layers)},split=3[n][a][b];` +
     `[a]palettegen=stats_mode=diff[p];` +
-    `[b][p]paletteuse=${PALETTEUSE[dither]}:diff_mode=rectangle[g]`;
+    `[b][p]paletteuse=${paletteuseDither(dither)}:diff_mode=rectangle[g]`;
   return [...BASE, '-y', ...seekArgs(clip), '-filter_complex', graph,
     '-map', '[n]', '-f', 'null', '-', '-map', '[g]', '-loop', '0', out];
 }

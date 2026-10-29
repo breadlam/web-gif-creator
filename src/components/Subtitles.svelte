@@ -1,9 +1,10 @@
 <script lang="ts">
   import type { Cue } from '../lib/ass';
-  import { FONTS } from '../lib/fonts';
   import { cueText, DEFAULT_SUBTITLE_STYLE, nearby, overlapping, searchCues } from '../lib/subtitles';
   import { formatTime } from '../lib/time';
   import { app, clipToCue, controls, extendToCue, setCueText } from '../state.svelte';
+  import FontSelect from './FontSelect.svelte';
+  import NumberField from './NumberField.svelte';
 
   const inClip = $derived(overlapping(app.cues, app.start, app.end));
 
@@ -30,13 +31,17 @@
 
         {#if app.subMode === 'custom'}
           <div class="row style">
-            <select bind:value={app.settings.subtitleStyle.font} aria-label="Subtitle font">
-              {#each FONTS as f}<option value={f.id}>{f.label}</option>{/each}
-            </select>
+            <FontSelect bind:value={app.settings.subtitleStyle.font} label="Subtitle font" />
             <input type="color" bind:value={app.settings.subtitleStyle.color} aria-label="Subtitle colour" />
             <input type="color" bind:value={app.settings.subtitleStyle.outlineColor} aria-label="Subtitle outline colour" />
-            <label class="row mini">Size <input type="range" min="3" max="20" step="0.5" bind:value={app.settings.subtitleStyle.size} /></label>
-            <label class="row mini">Outline <input type="range" min="0" max="2" step="0.1" bind:value={app.settings.subtitleStyle.outline} /></label>
+            <span class="row mini">
+              Size <input type="range" min="2" max="20" step="0.5" bind:value={app.settings.subtitleStyle.size} aria-label="Subtitle size slider" />
+              <NumberField label="Subtitle size" bind:value={app.settings.subtitleStyle.size} min={0.5} max={100} suffix="%" size={4} />
+            </span>
+            <span class="row mini">
+              Outline <input type="range" min="0" max="2" step="0.1" bind:value={app.settings.subtitleStyle.outline} aria-label="Subtitle outline slider" />
+              <NumberField label="Subtitle outline" bind:value={app.settings.subtitleStyle.outline} min={0} max={20} suffix="%" size={4} />
+            </span>
           </div>
           <p class="muted note">
             Drag the subtitle on the video to move it.
@@ -107,7 +112,6 @@
 {/if}
 
 <style>
-  select,
   input[type='search'] {
     width: 100%;
   }

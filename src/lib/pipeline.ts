@@ -5,7 +5,7 @@ import {
 } from './commands';
 import { engine, type ExecResult } from './engine';
 import { fontNames, remapMissingFonts } from './fontNames';
-import { FONTS } from './fonts';
+import { bundledFonts } from './fonts';
 import { featureValue, parseFrameProgress, parseTimeProgress } from './metadata';
 import { outputWidth, parseProbe, type MediaInfo } from './probe';
 import {
@@ -40,14 +40,16 @@ let bundledNames: string[] | null = null;
 export interface LoadedFonts {
   /** Number of fonts embedded in the file. */
   embedded: number;
-  /** Every name libass can match a font by. */
+  /** Every name libass can match a bundled or embedded font by. */
   names: string[];
+  /** The embedded fonts' bytes, so the UI can offer them for captions too. */
+  files: Uint8Array[];
 }
 
 /** Bundled fonts plus any fonts embedded in the file (MKV attachments, used by ASS styles). */
 export async function loadFonts(input: string, info: MediaInfo): Promise<LoadedFonts> {
   if (!bundledNames) {
-    const files = [...new Set(FONTS.map((f) => f.file))];
+    const files = [...new Set(bundledFonts().map((f) => f.file!))];
     const loaded = await Promise.all(files.map(async (file) => {
       const res = await fetch(new URL(`fonts/${file}`, document.baseURI));
       if (!res.ok) throw new Error(`Couldn't load font ${file}`);
@@ -61,7 +63,8 @@ export async function loadFonts(input: string, info: MediaInfo): Promise<LoadedF
     if (name.startsWith('attachment-')) await engine.remove(`${FONTS_DIR}/${name}`);
   }
   const names = [...bundledNames];
-  if (info.fonts.length === 0) return { embedded: 0, names };
+  const files: Uint8Array[] = [];
+  if (info.fonts.length === 0) return { embedded: 0, names, files };
   await engine.exec(dumpFontArgs(input, info.fonts));
   const dumped = (await engine.list(FONTS_DIR)).filter((n) => n.startsWith('attachment-'));
   for (const name of dumped) {
@@ -69,8 +72,9 @@ export async function loadFonts(input: string, info: MediaInfo): Promise<LoadedF
     // Re-register through write() so the font survives an ffmpeg reload after cancel.
     await engine.write(`${FONTS_DIR}/${name}`, bytes);
     names.push(...fontNames(bytes));
+    files.push(bytes);
   }
-  return { embedded: dumped.length, names };
+  return { embedded: dumped.length, names, files };
 }
 
 /**
@@ -150,6 +154,12 @@ function clipOf(job: Job): Clip {
   return { input: job.input, video: job.info.videoIndex, start: job.start, duration: job.end - job.start, height: job.height };
 }
 
+/** Make a user's font file available to libass. Returns the names it can be matched by. */
+export async function addFontFile(bytes: Uint8Array, name: string): Promise<string[]> {
+  await engine.write(`${FONTS_DIR}/${name}`, bytes);
+  return fontNames(bytes);
+}
+
 /** Measure the size-model features for a clip at a given frame rate. */
 export async function measure(job: Job, fps: number, progress: Progress): Promise<Record<string, number>> {
   const features = modelFor(job.dither).features;
@@ -201,7 +211,7 @@ export async function planClip(job: Job, opts: PlanOptions, progress: Progress):
       const snapped = snapFps(Math.min(opts.manualFps, source), opts.uniform);
       const frames = frameCount(duration, snapped.fps);
       return {
-        ...base, ...snapped, frames, limitedBy: 'manual',
+        ...base, ...snapped, frames, limitedBy: opts.manualFps > source ? 'source' : 'manual',
         expectedBytes: gifBytes(frames, width, job.height, k.expected),
         safeBytes: gifBytes(frames, width, job.height, k.safe),
       };
