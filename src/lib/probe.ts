@@ -6,6 +6,8 @@ export interface SubtitleTrack {
   title: string;
   /** Text-based (can be converted to ASS); bitmap tracks (PGS, VobSub) are not supported yet. */
   text: boolean;
+  default: boolean;
+  forced: boolean;
 }
 
 export interface FontAttachment {
@@ -55,7 +57,7 @@ interface ProbeStream {
   avg_frame_rate?: string;
   r_frame_rate?: string;
   duration?: string;
-  disposition?: { attached_pic?: number };
+  disposition?: { attached_pic?: number; default?: number; forced?: number };
   tags?: Record<string, string>;
 }
 
@@ -89,6 +91,8 @@ export function parseProbe(json: ProbeJson): MediaInfo {
       language: tag(s, 'language'),
       title: tag(s, 'title'),
       text: TEXT_SUBTITLE_CODECS.has(s.codec_name ?? ''),
+      default: s.disposition?.default === 1,
+      forced: s.disposition?.forced === 1,
     }));
   const fonts = streams
     .filter((s) => s.codec_type === 'attachment')

@@ -2,13 +2,26 @@
   import { onMount } from 'svelte';
   import type { TextOverlay } from '../lib/ass';
   import { font } from '../lib/fonts';
+  import { activeAt, cueText, ORIGINAL_PREVIEW_STYLE, overlapping, type SubtitleStyle } from '../lib/subtitles';
   import { formatTime } from '../lib/time';
   import { app, controls, playback, renderPreview, requestStill } from '../state.svelte';
 
   let video: HTMLVideoElement | undefined = $state();
   let stage: HTMLDivElement | undefined = $state();
   let stageHeight = $state(0);
-  let drag: { id: string; dx: number; dy: number } | null = null;
+  /** What is being dragged: a caption (by id) or the subtitle block. */
+  let drag: { id: string | null; dx: number; dy: number } | null = null;
+
+  const included = $derived(app.subMode === 'off' ? [] : app.cues.filter((c) => !app.disabledCues.includes(c.line)));
+  const subtitleNow = $derived(activeAt(included, app.current));
+  // In 'My style' mode, show a dimmed sample when no line is on screen, so it can still be dragged.
+  const subtitleSample = $derived(
+    app.subMode === 'custom' && subtitleNow.length === 0 ? (overlapping(included, app.start, app.end)[0] ?? included[0]) : undefined,
+  );
+  const subtitleLines = $derived(
+    (subtitleNow.length ? subtitleNow : subtitleSample ? [subtitleSample] : []).map((c) => cueText(c, app.cueOverrides)),
+  );
+  const subtitleLook = $derived<SubtitleStyle>(app.subMode === 'custom' ? app.settings.subtitleStyle : ORIGINAL_PREVIEW_STYLE);
 
   const dar = $derived(app.info?.dar ?? 16 / 9);
   const hasFrameCallback = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
@@ -53,7 +66,7 @@
     requestStill(app.current);
   }
 
-  function overlayStyle(o: TextOverlay): string {
+  function overlayStyle(o: SubtitleStyle): string {
     const f = font(o.font);
     const px = (o.size / 100) * stageHeight;
     return [
@@ -72,17 +85,17 @@
     return (app.current >= o.start && app.current < o.end) || app.selected === o.id;
   }
 
-  function pointerDown(e: PointerEvent, o: TextOverlay) {
+  function pointerDown(e: PointerEvent, id: string | null, o: { x: number; y: number }) {
     if (!stage) return;
-    app.selected = o.id;
+    if (id) app.selected = id;
     const r = stage.getBoundingClientRect();
-    drag = { id: o.id, dx: e.clientX - (r.left + o.x * r.width), dy: e.clientY - (r.top + o.y * r.height) };
+    drag = { id, dx: e.clientX - (r.left + o.x * r.width), dy: e.clientY - (r.top + o.y * r.height) };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
 
   function pointerMove(e: PointerEvent) {
     if (!drag || !stage) return;
-    const o = app.overlays.find((x) => x.id === drag!.id);
+    const o = drag.id === null ? app.settings.subtitleStyle : app.overlays.find((x) => x.id === drag!.id);
     if (!o) return;
     const r = stage.getBoundingClientRect();
     o.x = Math.min(1, Math.max(0, (e.clientX - r.left - drag.dx) / r.width));
@@ -118,12 +131,27 @@
             style={overlayStyle(o)}
             role="button"
             tabindex="-1"
-            onpointerdown={(e) => pointerDown(e, o)}
+            onpointerdown={(e) => pointerDown(e, o.id, o)}
             onpointermove={pointerMove}
             onpointerup={() => (drag = null)}
           >{o.text}</div>
         {/if}
       {/each}
+      {#if subtitleLines.length}
+        <div
+          class="text subtitle"
+          class:draggable={app.subMode === 'custom'}
+          class:inactive={subtitleNow.length === 0}
+          class:approx={app.subMode === 'original'}
+          style={overlayStyle(subtitleLook)}
+          role="button"
+          tabindex="-1"
+          title={app.subMode === 'custom' ? 'Drag to move the subtitles' : 'Approximate preview of the original styling'}
+          onpointerdown={(e) => app.subMode === 'custom' && pointerDown(e, null, app.settings.subtitleStyle)}
+          onpointermove={pointerMove}
+          onpointerup={() => (drag = null)}
+        >{subtitleLines.join('\n')}</div>
+      {/if}
     </div>
   </div>
   <div class="row bar">
@@ -195,6 +223,17 @@
   }
   .text.inactive {
     opacity: 0.45;
+  }
+  /* Subtitles are anchored at their bottom centre, like the ASS they become. */
+  .text.subtitle {
+    transform: translate(-50%, -100%);
+    cursor: default;
+  }
+  .text.subtitle.draggable {
+    cursor: move;
+  }
+  .text.subtitle.approx {
+    pointer-events: none;
   }
   .bar .time {
     margin-left: auto;

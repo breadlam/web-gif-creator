@@ -1,17 +1,18 @@
-import { buildOverlayAss, disableCues, type TextOverlay } from './ass';
+import { buildOverlayAss, disableCues, type Cue, type TextOverlay } from './ass';
 import {
-  analysisArgs, dumpFontArgs, encodeArgs, extractSubtitleArgs, featureFile, FONTS_DIR,
-  previewFrameArgs, stillFrameArgs, WORK, type Clip, type TextLayers,
+  analysisArgs, dumpFontArgs, encodeArgs, extractSubtitlesArgs, featureFile, FONTS_DIR,
+  previewFrameArgs, stillFrameArgs, subtitleFile, WORK, type Clip, type TextLayers,
 } from './commands';
 import { engine, type ExecResult } from './engine';
 import { fontNames, remapMissingFonts } from './fontNames';
 import { FONTS } from './fonts';
 import { featureValue, parseFrameProgress, parseTimeProgress } from './metadata';
-import { outputWidth, parseProbe, type MediaInfo, type SubtitleTrack } from './probe';
+import { outputWidth, parseProbe, type MediaInfo } from './probe';
 import {
   estimateK, frameCount, gifBytes, modelFor, planFps, snapFps,
   type Dither, type FpsPlan, type KEstimate,
 } from './sizeModel';
+import { applyOverrides, buildSubtitleAss, overlapping, type SubtitleMode, type SubtitleStyle } from './subtitles';
 
 export type Progress = (fraction: number | null, label: string) => void;
 
@@ -72,32 +73,60 @@ export async function loadFonts(input: string, info: MediaInfo): Promise<LoadedF
   return { embedded: dumped.length, names };
 }
 
-/** Convert a text subtitle track to ASS. Reads through the whole file (demux only). */
-export async function extractSubtitles(input: string, info: MediaInfo, track: SubtitleTrack, progress: Progress): Promise<string> {
-  const out = `${WORK}/track-${track.index}.ass`;
-  const r = await engine.exec(extractSubtitleArgs(input, track.index, track.codec, out), (l) => {
+/**
+ * Convert every text subtitle track to ASS, keyed by stream index. One pass over the
+ * file (demux only), so switching tracks afterwards is instant.
+ */
+export async function extractSubtitles(input: string, info: MediaInfo, progress: Progress): Promise<Record<number, string>> {
+  const tracks = info.subtitles.filter((t) => t.text);
+  if (tracks.length === 0) return {};
+  const r = await engine.exec(extractSubtitlesArgs(input, tracks), (l) => {
     const t = parseTimeProgress(l);
-    if (t !== null && info.duration > 0) progress(Math.min(1, t / info.duration), 'Extracting subtitles');
+    if (t !== null && info.duration > 0) progress(Math.min(1, t / info.duration), 'Reading subtitles');
   });
-  if (r.code !== 0) throw new FfmpegError('Extracting subtitles', r);
-  const text = await engine.readText(out);
-  await engine.remove(out);
-  return text;
+  const out: Record<number, string> = {};
+  for (const t of tracks) {
+    const path = subtitleFile(t.index);
+    if (!(await engine.exists(path))) continue;
+    out[t.index] = await engine.readText(path);
+    await engine.remove(path);
+  }
+  if (Object.keys(out).length === 0 && r.code !== 0) throw new FfmpegError('Reading subtitles', r);
+  return out;
+}
+
+export interface SubtitleSettings {
+  mode: SubtitleMode;
+  /** The selected track as ASS, for 'original' mode. */
+  ass: string | null;
+  cues: Cue[];
+  /** ASS line numbers of cues to leave out. */
+  disabled: Set<number>;
+  /** Edited text, by ASS line number. */
+  overrides: Record<number, string>;
+  style: SubtitleStyle;
 }
 
 export interface TextSettings {
-  subtitleAss: string | null;
-  disabledCues: Set<number>;
+  subtitles: SubtitleSettings;
   overlays: TextOverlay[];
   /** Font names available to libass; subtitle styles using others fall back to Noto Sans. */
   fonts: string[];
 }
 
-export async function writeTextLayers(t: TextSettings, width: number, height: number): Promise<TextLayers> {
+export async function writeTextLayers(t: TextSettings, width: number, height: number, range: [number, number]): Promise<TextLayers> {
   const layers: TextLayers = {};
-  if (t.subtitleAss) {
+  const s = t.subtitles;
+  if (s.mode === 'original' && s.ass) {
     layers.subtitles = `${WORK}/subtitles.ass`;
-    await engine.write(layers.subtitles, remapMissingFonts(disableCues(t.subtitleAss, t.disabledCues), t.fonts, 'Noto Sans'));
+    const ass = applyOverrides(disableCues(s.ass, s.disabled), s.overrides);
+    await engine.write(layers.subtitles, remapMissingFonts(ass, t.fonts, 'Noto Sans'));
+  } else if (s.mode === 'custom') {
+    const cues = overlapping(s.cues, range[0], range[1]).filter((c) => !s.disabled.has(c.line));
+    if (cues.length) {
+      layers.subtitles = `${WORK}/subtitles.ass`;
+      await engine.write(layers.subtitles, buildSubtitleAss(cues, s.overrides, s.style, width, height));
+    }
   }
   const active = t.overlays.filter((o) => o.text.trim() && o.end > o.start);
   if (active.length) {

@@ -74,19 +74,22 @@ async function runVideo(browser, url, video, index) {
       result.unsupported = (await page.locator('.unsupported p').textContent())?.trim();
       return result;
     }
-    const field = (label) => page.locator('.timeline label.field', { hasText: label }).locator('input');
-    await field('End').fill('0:06');
-    await field('End').press('Tab');
-    await field('Start').fill('0:02');
-    await field('Start').press('Tab');
-
-    const track = page.locator('.card', { hasText: 'Subtitles' }).locator('select');
-    if (await track.count()) {
-      const value = await track.locator('option:not([disabled])').nth(1).getAttribute('value');
-      await track.selectOption(value);
-      await idle();
-      result.cuesInRange = await page.locator('.card', { hasText: 'Subtitles' }).locator('li').count();
+    const subs = page.locator('.card', { hasText: 'Subtitles' });
+    if (await subs.locator('.modes').count()) {
+      // Subtitles are read on open; clip to the first line near the playhead and use "My style".
+      result.track = await subs.locator('select').first().evaluate((s) => s.selectedOptions[0]?.textContent);
+      await subs.locator('.browse li').first().getByRole('button', { name: 'Clip' }).click();
+      await subs.locator('.modes label', { hasText: 'My style' }).click();
+      result.subtitleLinesInClip = await subs.locator('ul:not(.browse) li').count();
+      result.subtitlePreview = await page.locator('.frame .text.subtitle').textContent().catch(() => null);
+    } else {
+      const field = (label) => page.locator('.timeline label.field', { hasText: label }).locator('input');
+      await field('End').fill('0:06');
+      await field('End').press('Tab');
+      await field('Start').fill('0:02');
+      await field('Start').press('Tab');
     }
+    result.range = await page.locator('.timeline label.field input').evaluateAll((els) => els.map((e) => e.value));
 
     await page.getByRole('button', { name: 'Add text' }).click();
     await page.locator('textarea').first().fill('E2E caption');

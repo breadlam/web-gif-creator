@@ -40,20 +40,27 @@ export function scaleFilter(height: number): string {
 
 /**
  * Burn-in filters. Input seeking (-ss before -i) resets timestamps to 0, but the ASS
- * files use source-video times, so shift PTS while libass renders.
+ * files use source-video times, so shift PTS while libass renders. The subtitles filter
+ * truncates the frame time to whole milliseconds, so a frame exactly at a line's start
+ * could land 1 ms early and be skipped; the extra 1 ms prevents that.
  */
 export function textFilters(start: number, layers: TextLayers): string[] {
   const subs = [layers.subtitles, layers.overlays].filter((p): p is string => !!p);
   if (subs.length === 0) return [];
   return [
-    `setpts=PTS+${ffTime(start)}/TB`,
+    `setpts=PTS+${ffTime(start + 0.001)}/TB`,
     ...subs.map((p) => `subtitles=filename=${p}:fontsdir=${FONTS_DIR}`),
     'setpts=PTS-STARTPTS',
   ];
 }
 
+/**
+ * Text is burned in before the fps filter, while timestamps are still in the source's
+ * fine-grained time base. After fps the time base is one frame (e.g. 60 ms), and
+ * rounding there can shift a frame's time from a line's start to just before it.
+ */
 function sourceChain(clip: Clip, fps: number, layers: TextLayers): string {
-  return [scaleFilter(clip.height), `fps=${fpsArg(fps)}`, ...textFilters(clip.start, layers)].join(',');
+  return [scaleFilter(clip.height), ...textFilters(clip.start, layers), `fps=${fpsArg(fps)}`].join(',');
 }
 
 export function fpsArg(fps: number): string {
@@ -110,9 +117,17 @@ export function stillFrameArgs(input: string, time: number, height: number, out:
     '-vf', scaleFilter(height), '-q:v', '4', out];
 }
 
-export function extractSubtitleArgs(input: string, streamIndex: number, codec: string, out: string): string[] {
-  const copy = codec === 'ass' || codec === 'ssa';
-  return [...BASE, '-y', '-i', input, '-map', `0:${streamIndex}`, '-c:s', copy ? 'copy' : 'ass', out];
+export function subtitleFile(streamIndex: number): string {
+  return `${WORK}/track-${streamIndex}.ass`;
+}
+
+/** Convert text subtitle tracks to ASS in one pass (it reads the whole file, demux only). */
+export function extractSubtitlesArgs(input: string, tracks: { index: number; codec: string }[]): string[] {
+  const outputs = tracks.flatMap((t) => {
+    const copy = t.codec === 'ass' || t.codec === 'ssa';
+    return ['-map', `0:${t.index}`, '-c:s', copy ? 'copy' : 'ass', subtitleFile(t.index)];
+  });
+  return [...BASE, '-y', '-i', input, ...outputs];
 }
 
 /** Dump font attachments. ffmpeg exits non-zero (no output file), but the dump happens first. */

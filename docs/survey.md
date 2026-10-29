@@ -57,10 +57,21 @@ analysis: same source chain → format=yuv420p,tblend=all_mode=difference → bb
           → metadata=print:file=…  (no palette, no GIF)
 ```
 
-Subtitles and captions are both ASS files burned in with `subtitles=`. Captions are
-generated with `PlayResX/Y` equal to the GIF size and `\pos()` from the dragged position.
-Embedded tracks are extracted with `-map 0:N -c:s copy|ass`, and individual lines can be
-switched off (they become ASS `Comment:` lines) or turned into editable captions.
+Subtitles and captions are both ASS files burned in with `subtitles=`, *before* the `fps`
+filter. The subtitles filter truncates frame times to whole milliseconds, and after `fps`
+the time base is a whole frame, so a frame at a line's exact start could be skipped. A 1 ms
+nudge in the timestamp shift covers the remaining rounding.
+
+- **Captions** are generated with `PlayResX/Y` equal to the GIF size and `\pos()` from the
+  dragged position.
+- **Embedded text tracks** are all converted in one pass when a file opens
+  (`-map 0:N -c:s copy|ass` per track). The default track is the one in the browser's
+  language that isn't signs/songs, with the most lines.
+- **"Original styling"** burns the track's ASS (lines switched off become `Comment:`;
+  edited lines get their text replaced).
+- **"My style"** regenerates the lines in the clip with one style. It uses bottom-centre
+  alignment plus margins rather than `\pos()`, so lines that overlap in time stack the way
+  normal subtitles do.
 
 ## 3. Constraints and quirks found along the way
 
@@ -136,7 +147,9 @@ Working (verified end-to-end in Chromium with the real ffmpeg.wasm):
 - open MP4/MKV/WebM, probe, AV1 detection
 - trim UI with frame stepping and shortcuts
 - size budget, height and dither settings; calculated or fixed frame rate with even-timing option
-- subtitle track extraction (ASS and SRT tested), per-line toggles, embedded fonts
+- subtitles read on open (ASS and SRT tested), automatic dialogue-track choice, lines on the
+  preview, search with Clip/Extend, original styling (embedded fonts) or a draggable custom
+  style, per-line toggles and edits
 - draggable captions with libass-consistent preview, plus "preview exact frame" rendered through ffmpeg
 - GIF encode with progress and cancel; download
 

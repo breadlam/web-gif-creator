@@ -8,8 +8,12 @@ video is never uploaded. Deploys as a static site to GitHub Pages.
 - Set a max file size (default 20 MB) and height (default 540p). The frame rate is
   *calculated* from one quick analysis pass, not found by trial encodes.
 - ffmpeg's `palettegen` → `paletteuse` pipeline, with a choice of dithering.
-- Burn in subtitles from the video (ASS/SSA/SRT/WebVTT, with embedded fonts), or add your
-  own captions and drag them into place. "Preview exact frame" renders through ffmpeg.
+- Subtitles are read from the video when it opens (ASS/SSA/SRT/WebVTT, with embedded
+  fonts). The dialogue track is picked automatically, and lines show on the preview. Search
+  lines and press **Clip** to set the range to a line. Burn them in with the original
+  styling, or in your own font, size and colours, dragged into place. Each line can be
+  switched off or edited.
+- Add your own captions and drag them into place. "Preview exact frame" renders through ffmpeg.
 
 See [docs/survey.md](docs/survey.md) for the design, constraints and roadmap, and
 [tools/calibrate/README.md](tools/calibrate/README.md) for how the size model is fitted

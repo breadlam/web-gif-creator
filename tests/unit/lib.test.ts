@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { assColor, assTime, buildOverlayAss, disableCues, escapeAssText, parseAssCues, plainText, type TextOverlay } from '../../src/lib/ass';
-import { analysisArgs, dumpFontArgs, encodeArgs, scaleFilter, textFilters } from '../../src/lib/commands';
+import { analysisArgs, dumpFontArgs, encodeArgs, extractSubtitlesArgs, scaleFilter, textFilters } from '../../src/lib/commands';
 import { fontNames, remapMissingFonts } from '../../src/lib/fontNames';
 import { featureValue, parseFrameMetadata, parseFrameProgress, parseTimeProgress } from '../../src/lib/metadata';
 import { outputWidth, parseProbe, type ProbeJson } from '../../src/lib/probe';
 import { coefsAt, estimateK, frameCount, gifBytes, MODEL, planFps, snapFps } from '../../src/lib/sizeModel';
 import { compactTime, formatTime, parseTime } from '../../src/lib/time';
+import { activeAt, applyOverrides, bestTrack, buildSubtitleAss, DEFAULT_SUBTITLE_STYLE, nearby, overlapping, searchCues } from '../../src/lib/subtitles';
 
 describe('time', () => {
   it('formats and parses', () => {
@@ -186,8 +187,11 @@ describe('commands', () => {
 
   it('shifts timestamps around subtitle burn-in', () => {
     expect(textFilters(61.5, { overlays: '/work/o.ass' })).toEqual([
-      'setpts=PTS+61.500/TB', 'subtitles=filename=/work/o.ass:fontsdir=/fonts', 'setpts=PTS-STARTPTS',
+      'setpts=PTS+61.501/TB', 'subtitles=filename=/work/o.ass:fontsdir=/fonts', 'setpts=PTS-STARTPTS',
     ]);
+    // Burned in before fps, while the time base is still fine-grained.
+    const args = encodeArgs({ input: 'in', start: 61.5, duration: 2, height: 540 }, 15, 'bayer', { subtitles: '/work/s.ass' }, 'o.gif');
+    expect(args[args.indexOf('-filter_complex') + 1]).toMatch(/setsar=1,setpts=PTS\+61\.501\/TB,subtitles=[^,]+,setpts=PTS-STARTPTS,fps=15,split=3/);
     expect(textFilters(0, {})).toEqual([]);
   });
 
@@ -231,5 +235,62 @@ describe('font names', () => {
     expect(out[2]).toBe('Style: Default,Noto Sans,20,&H00FFFFFF');
     expect(out[3]).toBe('Style: Sign,Embedded Font,20,&H00FFFFFF');
     expect(out[6]).toContain('{\\fnNoto Sans}a{\\fnembedded font}b');
+  });
+});
+
+describe('subtitles', () => {
+  const cues = [
+    { line: 10, start: 1, end: 2, text: 'one' },
+    { line: 11, start: 2.5, end: 4, text: 'Two words' },
+    { line: 12, start: 30, end: 31, text: 'far away' },
+  ];
+  const track = (index: number, title: string, language = 'eng', forced = false) =>
+    ({ index, codec: 'ass', language, title, text: true, default: false, forced });
+
+  it('finds overlapping, active, nearby and matching cues', () => {
+    expect(overlapping(cues, 1.5, 3).map((c) => c.line)).toEqual([10, 11]);
+    expect(activeAt(cues, 2.6).map((c) => c.line)).toEqual([11]);
+    expect(nearby(cues, 0, 2).map((c) => c.line)).toEqual([10, 11]);
+    expect(searchCues(cues, 'WORDS').map((c) => c.line)).toEqual([11]);
+    expect(searchCues(cues, '  ')).toEqual([]);
+  });
+
+  it('prefers dialogue tracks over signs, then language, then line count', () => {
+    const tracks = [track(3, 'English Lyrics/Signs'), track(4, 'English Subtitles'), track(5, 'Japanese', 'jpn')];
+    expect(bestTrack(tracks, { 3: 40, 4: 308, 5: 400 }, 'en-US')).toBe(4);
+    expect(bestTrack(tracks, { 3: 40, 4: 308, 5: 400 }, 'ja')).toBe(5);
+    expect(bestTrack([track(3, 'Signs'), track(4, 'Full', 'eng', true)], { 3: 10, 4: 0 }, 'en')).toBe(3);
+    expect(bestTrack(tracks, {}, 'en')).toBeNull();
+  });
+
+  it('replaces the text of edited lines only', () => {
+    const ass = [
+      '[Events]',
+      'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,{\\i1}Hi, there',
+      'Dialogue: 0,0:00:03.00,0:00:04.00,Default,,0,0,0,,Keep',
+    ].join('\n');
+    const out = applyOverrides(ass, { 2: 'Hello\nworld' }).split('\n');
+    expect(out[2]).toBe('Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Hello\\Nworld');
+    expect(out[3]).toContain(',,Keep');
+  });
+
+  it('builds bottom-centre subtitles positioned by margins', () => {
+    const style = { ...DEFAULT_SUBTITLE_STYLE, x: 0.25, y: 0.9 };
+    const ass = buildSubtitleAss(cues.slice(0, 2), { 11: 'changed' }, style, 960, 540);
+    // centre at x=240: MarginL 0, MarginR 480; bottom at y=486: MarginV 54
+    expect(ass).toMatch(/Style: Sub,Noto Sans,41,.*,2,0,480,54,1/);
+    expect(ass).toContain('Dialogue: 0,0:00:01.00,0:00:02.00,Sub,,0,0,0,,one');
+    expect(ass).toContain(',,changed');
+  });
+});
+
+describe('subtitle extraction command', () => {
+  it('converts every track in one pass', () => {
+    expect(extractSubtitlesArgs('/input/a.mkv', [{ index: 3, codec: 'ass' }, { index: 4, codec: 'subrip' }]).slice(3)).toEqual([
+      '-y', '-i', '/input/a.mkv',
+      '-map', '0:3', '-c:s', 'copy', '/work/track-3.ass',
+      '-map', '0:4', '-c:s', 'ass', '/work/track-4.ass',
+    ]);
   });
 });

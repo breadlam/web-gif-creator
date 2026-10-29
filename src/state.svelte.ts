@@ -7,6 +7,7 @@ import {
 } from './lib/pipeline';
 import { outputWidth, type MediaInfo } from './lib/probe';
 import { frameCount, snapFps, type Dither } from './lib/sizeModel';
+import { bestTrack, DEFAULT_SUBTITLE_STYLE, type SubtitleMode, type SubtitleStyle } from './lib/subtitles';
 import { compactTime } from './lib/time';
 
 export interface Settings {
@@ -16,9 +17,13 @@ export interface Settings {
   fpsMode: 'auto' | 'manual';
   manualFps: number;
   uniform: boolean;
+  subtitleStyle: SubtitleStyle;
 }
 
-const DEFAULTS: Settings = { maxMB: 20, height: 540, dither: 'sierra2_4a', fpsMode: 'auto', manualFps: 15, uniform: true };
+const DEFAULTS: Settings = {
+  maxMB: 20, height: 540, dither: 'sierra2_4a', fpsMode: 'auto', manualFps: 15, uniform: true,
+  subtitleStyle: { ...DEFAULT_SUBTITLE_STYLE },
+};
 const SETTINGS_KEY = 'web-gif-creator.settings';
 
 function loadSettings(): Settings {
@@ -59,10 +64,14 @@ export const app = $state({
   start: 0,
   end: 0,
   settings: loadSettings(),
+  /** Every text subtitle track, converted to ASS, by stream index. */
+  subtitleTracks: {} as Record<number, string>,
+  subtitleStatus: 'none' as 'none' | 'loading' | 'ready' | 'failed',
   track: null as number | null,
-  subtitleAss: null as string | null,
   cues: [] as Cue[],
+  subMode: 'off' as SubtitleMode,
   disabledCues: [] as number[],
+  cueOverrides: {} as Record<number, string>,
   embeddedFonts: 0,
   fontNames: [] as string[],
   overlays: [] as TextOverlay[],
@@ -94,7 +103,8 @@ export function planKey(): string {
   const s = app.settings;
   return JSON.stringify([
     app.input, app.start, app.end, s.maxMB, s.height, s.dither, s.uniform, s.fpsMode, s.manualFps,
-    app.track, app.disabledCues, app.overlays,
+    app.track, app.subMode, app.subMode === 'custom' ? s.subtitleStyle : null, app.disabledCues,
+    app.cueOverrides, app.overlays,
   ]);
 }
 
@@ -129,7 +139,8 @@ export async function openVideo(file: File): Promise<void> {
   if (app.videoUrl) URL.revokeObjectURL(app.videoUrl);
   Object.assign(app, {
     file, info: null, input: '', videoUrl: URL.createObjectURL(file), playable: true, stillUrl: '',
-    track: null, subtitleAss: null, cues: [], disabledCues: [], plan: null, planKey: '', output: null,
+    subtitleTracks: {}, subtitleStatus: 'none', track: null, cues: [], subMode: 'off', disabledCues: [],
+    cueOverrides: {}, plan: null, planKey: '', output: null,
     preview: null, overlays: [], selected: null,
   });
   await run('Reading video', async (progress) => {
@@ -145,33 +156,68 @@ export async function openVideo(file: File): Promise<void> {
     app.embeddedFonts = fonts.embedded;
     app.fontNames = fonts.names;
   });
+  if (app.info?.subtitles.some((t) => t.text) && !app.info.unsupported) await loadSubtitles();
 }
 
-export async function selectTrack(index: number | null): Promise<void> {
-  app.track = index;
-  app.subtitleAss = null;
-  app.cues = [];
-  app.disabledCues = [];
-  const track = app.info?.subtitles.find((t) => t.index === index);
-  if (!track || !app.info) return;
+/** Read every text subtitle track (one pass over the file) and pick the most useful one. */
+export async function loadSubtitles(): Promise<void> {
+  if (!app.info) return;
   const info = $state.snapshot(app.info) as MediaInfo;
-  const ass = await run('Extracting subtitles', (progress) => extractSubtitles(app.input, info, track, progress));
-  if (ass === undefined || app.track !== index) return;
-  app.subtitleAss = ass;
-  app.cues = parseAssCues(ass);
+  app.subtitleStatus = 'loading';
+  const tracks = await run('Reading subtitles', (progress) => extractSubtitles(app.input, info, progress));
+  if (!tracks || app.info?.duration !== info.duration) {
+    app.subtitleStatus = 'failed';
+    return;
+  }
+  app.subtitleTracks = tracks;
+  app.subtitleStatus = 'ready';
+  const counts = Object.fromEntries(Object.entries(tracks).map(([i, ass]) => [i, parseAssCues(ass).length]));
+  selectTrack(bestTrack(info.subtitles, counts, navigator.language || 'en'));
 }
 
-async function job(): Promise<Job> {
+export function selectTrack(index: number | null): void {
+  app.track = index;
+  app.cues = index === null || !(index in app.subtitleTracks) ? [] : parseAssCues(app.subtitleTracks[index]);
+  app.disabledCues = [];
+  app.cueOverrides = {};
+}
+
+/** Set the clip range to a subtitle line. */
+export function clipToCue(cue: Cue): void {
+  app.start = Math.max(0, cue.start);
+  app.end = Math.min(app.info?.duration ?? cue.end, cue.end);
+  controls.seek(app.start);
+}
+
+/** Grow the clip range to include a subtitle line. */
+export function extendToCue(cue: Cue): void {
+  app.start = Math.max(0, Math.min(app.start, cue.start));
+  app.end = Math.max(app.end, Math.min(app.info?.duration ?? cue.end, cue.end));
+}
+
+export function setCueText(cue: Cue, text: string): void {
+  if (text === cue.text) delete app.cueOverrides[cue.line];
+  else app.cueOverrides[cue.line] = text;
+}
+
+async function job(range: [number, number] = [app.start, app.end]): Promise<Job> {
   const { width, height } = outputSize();
   const layers = await writeTextLayers(
     {
-      subtitleAss: app.subtitleAss,
-      disabledCues: new Set(app.disabledCues),
+      subtitles: {
+        mode: app.subMode,
+        ass: app.track === null ? null : (app.subtitleTracks[app.track] ?? null),
+        cues: $state.snapshot(app.cues) as Cue[],
+        disabled: new Set(app.disabledCues),
+        overrides: $state.snapshot(app.cueOverrides) as Record<number, string>,
+        style: $state.snapshot(app.settings.subtitleStyle) as SubtitleStyle,
+      },
       overlays: $state.snapshot(app.overlays) as TextOverlay[],
       fonts: $state.snapshot(app.fontNames) as string[],
     },
     width,
     height,
+    range,
   );
   return {
     input: app.input,
@@ -228,7 +274,7 @@ export function retryFps(o: Output): number {
 
 export async function renderPreview(): Promise<void> {
   const time = app.current;
-  const blob = await run('Rendering preview frame', async () => previewFrame(await job(), time));
+  const blob = await run('Rendering preview frame', async () => previewFrame(await job([time, time + 0.001]), time));
   if (!blob) return;
   if (app.preview) URL.revokeObjectURL(app.preview.url);
   app.preview = { url: URL.createObjectURL(blob), time };
@@ -279,14 +325,4 @@ export function addOverlay(): void {
 export function removeOverlay(id: string): void {
   app.overlays = app.overlays.filter((o) => o.id !== id);
   if (app.selected === id) app.selected = null;
-}
-
-/** Turn a subtitle cue into an editable text overlay and stop burning the original. */
-export function cueToOverlay(cue: Cue): void {
-  addOverlay();
-  const o = app.overlays[app.overlays.length - 1];
-  o.text = cue.text;
-  o.start = cue.start;
-  o.end = cue.end;
-  if (!app.disabledCues.includes(cue.line)) app.disabledCues.push(cue.line);
 }
