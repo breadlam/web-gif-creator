@@ -1,0 +1,7 @@
+node_modules/
+dist/
+public/ffmpeg-core/
+tools/calibrate/.cache/
+test-results/
+*.local
+.DS_Store

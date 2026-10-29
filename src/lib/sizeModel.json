@@ -1,0 +1,117 @@
+{
+  "ffmpeg": "5.1.4",
+  "statsMode": "diff",
+  "fpsCalibrated": [
+    10,
+    15,
+    25
+  ],
+  "clips": 40,
+  "sources": 5,
+  "models": {
+    "sierra2_4a": {
+      "features": [
+        {
+          "kind": "bbox",
+          "threshold": 1
+        }
+      ],
+      "coefsByHeight": {
+        "360": [
+          0.5488
+        ],
+        "540": [
+          0.5115
+        ],
+        "720": [
+          0.4918
+        ]
+      },
+      "margin": 1.3,
+      "heldOut": {
+        "meanErr": 0.506,
+        "utilization": 0.744,
+        "overBudget": 0.2,
+        "worstOverBudget": 0.155
+      }
+    },
+    "floyd_steinberg": {
+      "features": [
+        {
+          "kind": "bbox",
+          "threshold": 0
+        }
+      ],
+      "coefsByHeight": {
+        "360": [
+          0.4552
+        ],
+        "540": [
+          0.4249
+        ],
+        "720": [
+          0.4092
+        ]
+      },
+      "margin": 1.49,
+      "heldOut": {
+        "meanErr": 1.156,
+        "utilization": 0.654,
+        "overBudget": 0.167,
+        "worstOverBudget": 0.163
+      }
+    },
+    "bayer": {
+      "features": [
+        {
+          "kind": "bbox",
+          "threshold": 0
+        }
+      ],
+      "coefsByHeight": {
+        "360": [
+          0.4534
+        ],
+        "540": [
+          0.4316
+        ],
+        "720": [
+          0.4201
+        ]
+      },
+      "margin": 1.76,
+      "heldOut": {
+        "meanErr": 2.197,
+        "utilization": 0.553,
+        "overBudget": 0.208,
+        "worstOverBudget": 0.378
+      }
+    },
+    "none": {
+      "features": [
+        {
+          "kind": "bbox",
+          "threshold": 0
+        }
+      ],
+      "coefsByHeight": {
+        "360": [
+          0.3799
+        ],
+        "540": [
+          0.3404
+        ],
+        "720": [
+          0.3165
+        ]
+      },
+      "margin": 1.76,
+      "heldOut": {
+        "meanErr": 1.964,
+        "utilization": 0.567,
+        "overBudget": 0.197,
+        "worstOverBudget": 0.373
+      }
+    }
+  }
+}
