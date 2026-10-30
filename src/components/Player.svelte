@@ -5,7 +5,7 @@
   import { PreviewSession, type Frame, type SoundSource, type VideoSource } from '../lib/preview/session';
   import { activeAt, cueText, ORIGINAL_PREVIEW_STYLE, overlapping, type SubtitleStyle } from '../lib/subtitles';
   import { formatTime } from '../lib/time';
-  import { app, controls, frameDuration, playback, renderPreview } from '../state.svelte';
+  import { app, controls, editHandlers, frameDuration, playback, renderPreview } from '../state.svelte';
   import PresetSelect from './PresetSelect.svelte';
 
   let canvas: HTMLCanvasElement | undefined = $state();
@@ -27,9 +27,12 @@
 
   const included = $derived(app.subMode === 'off' ? [] : app.cues.filter((c) => !app.disabledCues.includes(c.line)));
   const subtitleNow = $derived(activeAt(included, app.current));
-  // In 'My style' mode, show a dimmed sample when no line is on screen, so it can still be dragged.
+  // While the subtitle style is being edited, show a dimmed sample when no line is on
+  // screen, so it can still be seen and dragged.
   const subtitleSample = $derived(
-    app.subMode === 'custom' && subtitleNow.length === 0 ? (overlapping(included, app.start, app.end)[0] ?? included[0]) : undefined,
+    app.subMode === 'custom' && app.editing === 'subtitles' && subtitleNow.length === 0
+      ? (overlapping(included, app.start, app.end)[0] ?? included[0])
+      : undefined,
   );
   const subtitleLines = $derived(
     (subtitleNow.length ? subtitleNow : subtitleSample ? [subtitleSample] : []).map((c) => cueText(c, app.cueOverrides)),
@@ -204,12 +207,13 @@
   }
 
   function visible(o: TextOverlay): boolean {
-    return (app.current >= o.start && app.current < o.end) || app.selected === o.id;
+    return (app.current >= o.start && app.current < o.end) || app.editing === o.id;
   }
 
   function pointerDown(e: PointerEvent, id: string | null, o: { x: number; y: number }) {
     if (!stage) return;
-    if (id) app.selected = id;
+    // Focusing the text starts editing it (see editHandlers).
+    (e.currentTarget as HTMLElement).focus();
     const r = stage.getBoundingClientRect();
     drag = { id, dx: e.clientX - (r.left + o.x * r.width), dy: e.clientY - (r.top + o.y * r.height) };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -245,11 +249,13 @@
         {#if visible(o)}
           <div
             class="text"
-            class:selected={app.selected === o.id}
+            class:editing={app.editing === o.id}
             class:inactive={!(app.current >= o.start && app.current < o.end)}
             style={overlayStyle(o)}
             role="button"
             tabindex="-1"
+            data-edit={o.id}
+            {...editHandlers(o.id)}
             onpointerdown={(e) => pointerDown(e, o.id, o)}
             onpointermove={pointerMove}
             onpointerup={() => (drag = null)}
@@ -265,6 +271,8 @@
           style={overlayStyle(subtitleLook)}
           role="button"
           tabindex="-1"
+          data-edit="subtitles"
+          {...editHandlers('subtitles')}
           title={app.subMode === 'custom' ? 'Drag to move the subtitles' : 'Approximate preview of the original styling'}
           onpointerdown={(e) => app.subMode === 'custom' && pointerDown(e, null, app.settings.subtitleStyle)}
           onpointermove={pointerMove}
@@ -364,7 +372,7 @@
     user-select: none;
     touch-action: none;
   }
-  .text.selected {
+  .text.editing {
     outline: 1px dashed rgba(255, 255, 255, 0.8);
     outline-offset: 4px;
   }

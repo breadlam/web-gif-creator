@@ -81,7 +81,12 @@ export const app = $state({
   /** Fonts to offer for captions and subtitle styling (mirrors lib/fonts' registry). */
   fontChoices: [...allFonts()] as FontChoice[],
   overlays: [] as TextOverlay[],
-  selected: null as string | null,
+  /**
+   * The text being edited: a caption's id, or 'subtitles' for the subtitle style. Only
+   * this text is drawn (dimmed) when it isn't on screen at the current frame, so it can
+   * still be seen and moved; otherwise the preview shows just what the GIF will.
+   */
+  editing: null as string | null,
   plan: null as Plan | null,
   planKey: '',
   busy: null as null | { label: string; fraction: number | null },
@@ -221,7 +226,7 @@ export async function openVideo(file: File): Promise<void> {
     audioTrack: null,
     subtitleTracks: {}, subtitleStatus: 'none', track: null, cues: [], subMode: 'off', disabledCues: [],
     cueOverrides: {}, plan: null, planKey: '', output: null,
-    preview: null, overlays: [], selected: null,
+    preview: null, overlays: [], editing: null,
   });
   await run('Reading video', async (progress) => {
     const { info, input } = await openFile(file);
@@ -430,7 +435,7 @@ export async function addUserFont(file: File): Promise<FontId | null> {
 
 let overlayCounter = 0;
 
-export function addOverlay(): void {
+export function addOverlay(): string {
   const o: TextOverlay = {
     id: `t${++overlayCounter}`,
     text: 'Your text',
@@ -445,10 +450,28 @@ export function addOverlay(): void {
     end: app.end,
   };
   app.overlays.push(o);
-  app.selected = o.id;
+  return o.id;
 }
 
 export function removeOverlay(id: string): void {
   app.overlays = app.overlays.filter((o) => o.id !== id);
-  if (app.selected === id) app.selected = null;
+  if (app.editing === id) app.editing = null;
+}
+
+/**
+ * Focus handlers for everything that edits one piece of text (its controls, and the text
+ * itself on the video), each marked data-edit={key}. The text counts as being edited
+ * while focus is inside any of them.
+ */
+export function editHandlers(key: string) {
+  return {
+    onfocusin: () => (app.editing = key),
+    // Check once focus has landed. Switching windows (or opening a native colour picker)
+    // takes focus from the document without moving it, and doesn't end editing.
+    onfocusout: () =>
+      setTimeout(() => {
+        if (app.editing !== key || !document.hasFocus()) return;
+        if (!document.activeElement?.closest(`[data-edit="${key}"]`)) app.editing = null;
+      }),
+  };
 }

@@ -2,7 +2,7 @@
   import type { Cue } from '../lib/ass';
   import { cueText, DEFAULT_SUBTITLE_STYLE, nearby, overlapping, searchCues } from '../lib/subtitles';
   import { formatTime } from '../lib/time';
-  import { app, clipToCue, controls, extendToCue, setCueText } from '../state.svelte';
+  import { app, clipToCue, controls, editHandlers, extendToCue, setCueText } from '../state.svelte';
   import FontSelect from './FontSelect.svelte';
   import NumberField from './NumberField.svelte';
 
@@ -20,36 +20,39 @@
 {#if app.track !== null}
   <div class="card">
     <h2>Subtitles</h2>
-        <div class="modes" role="radiogroup" aria-label="Include subtitles in the GIF">
-          {#each [['off', 'Leave out'], ['original', 'Original styling'], ['custom', 'My style']] as [value, label]}
-            <label class:on={app.subMode === value}>
-              <input type="radio" name="submode" {value} bind:group={app.subMode} />
-              {label}
-            </label>
-          {/each}
-        </div>
-
-        {#if app.subMode === 'custom'}
-          <div class="row style">
-            <FontSelect bind:value={app.settings.subtitleStyle.font} label="Subtitle font" />
-            <input type="color" bind:value={app.settings.subtitleStyle.color} aria-label="Subtitle colour" />
-            <input type="color" bind:value={app.settings.subtitleStyle.outlineColor} aria-label="Subtitle outline colour" />
-            <span class="row mini">
-              Size <input type="range" min="2" max="20" step="0.5" bind:value={app.settings.subtitleStyle.size} aria-label="Subtitle size slider" />
-              <NumberField label="Subtitle size" bind:value={app.settings.subtitleStyle.size} min={0.5} max={100} suffix="%" />
-            </span>
-            <span class="row mini">
-              Outline <input type="range" min="0" max="2" step="0.1" bind:value={app.settings.subtitleStyle.outline} aria-label="Subtitle outline slider" />
-              <NumberField label="Subtitle outline" bind:value={app.settings.subtitleStyle.outline} min={0} max={20} suffix="%" />
-            </span>
+        <!-- Focus anywhere in here shows the subtitle on the video even between lines. -->
+        <div class="edit" tabindex="-1" data-edit="subtitles" {...editHandlers('subtitles')}>
+          <div class="modes" role="radiogroup" aria-label="Include subtitles in the GIF">
+            {#each [['off', 'Leave out'], ['original', 'Original styling'], ['custom', 'My style']] as [value, label]}
+              <label class:on={app.subMode === value}>
+                <input type="radio" name="submode" {value} bind:group={app.subMode} />
+                {label}
+              </label>
+            {/each}
           </div>
-          <p class="muted note">
-            Drag the subtitle on the video to move it.
-            <button class="small" onclick={() => ((app.settings.subtitleStyle.x = DEFAULT_SUBTITLE_STYLE.x), (app.settings.subtitleStyle.y = DEFAULT_SUBTITLE_STYLE.y))}>Reset position</button>
-          </p>
-        {:else if app.subMode === 'original'}
-          <p class="muted note">Burned in with the track's own fonts and positions. The video preview is approximate; use "Preview exact frame" to check.</p>
-        {/if}
+
+          {#if app.subMode === 'custom'}
+            <div class="row style">
+              <FontSelect bind:value={app.settings.subtitleStyle.font} label="Subtitle font" />
+              <input type="color" bind:value={app.settings.subtitleStyle.color} aria-label="Subtitle colour" />
+              <input type="color" bind:value={app.settings.subtitleStyle.outlineColor} aria-label="Subtitle outline colour" />
+              <span class="row mini">
+                Size <input type="range" min="2" max="20" step="0.5" bind:value={app.settings.subtitleStyle.size} aria-label="Subtitle size slider" />
+                <NumberField label="Subtitle size" bind:value={app.settings.subtitleStyle.size} min={0.5} max={100} suffix="%" />
+              </span>
+              <span class="row mini">
+                Outline <input type="range" min="0" max="2" step="0.1" bind:value={app.settings.subtitleStyle.outline} aria-label="Subtitle outline slider" />
+                <NumberField label="Subtitle outline" bind:value={app.settings.subtitleStyle.outline} min={0} max={20} suffix="%" />
+              </span>
+            </div>
+            <p class="muted note">
+              Drag the subtitle on the video to move it.
+              <button class="small" onclick={() => ((app.settings.subtitleStyle.x = DEFAULT_SUBTITLE_STYLE.x), (app.settings.subtitleStyle.y = DEFAULT_SUBTITLE_STYLE.y))}>Reset position</button>
+            </p>
+          {:else if app.subMode === 'original'}
+            <p class="muted note">Burned in with the track's own fonts and positions. The video preview is approximate; use "Preview exact frame" to check.</p>
+          {/if}
+        </div>
 
         <h3>In the clip <span class="muted">({inClip.length})</span></h3>
         {#if inClip.length === 0}
@@ -122,6 +125,9 @@
   .note {
     font-size: 0.82rem;
     margin: 0.4rem 0 0;
+  }
+  .edit:focus {
+    outline: none;
   }
   .modes {
     display: flex;

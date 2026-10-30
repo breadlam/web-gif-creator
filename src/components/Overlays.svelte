@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { formatTime, parseTime } from '../lib/time';
-  import { addOverlay, app, removeOverlay } from '../state.svelte';
+  import { addOverlay, app, editHandlers, removeOverlay } from '../state.svelte';
   import FontSelect from './FontSelect.svelte';
   import NumberField from './NumberField.svelte';
 
@@ -8,12 +9,21 @@
     const t = parseTime(text);
     if (t !== null) o[which] = t;
   }
+
+  /** Add a caption and start editing it, with its text selected to type over. */
+  async function add() {
+    const id = addOverlay();
+    await tick();
+    const box = document.querySelector<HTMLTextAreaElement>(`[data-edit="${id}"] textarea`);
+    box?.focus();
+    box?.select();
+  }
 </script>
 
 <div class="card">
   <div class="row head">
     <h2>Text</h2>
-    <button class="small" onclick={addOverlay}>Add text</button>
+    <button class="small" onclick={add}>Add text</button>
   </div>
   {#if app.overlays.length === 0}
     <p class="muted note">Add a caption, then drag it into place on the video. Each caption can have its own timing.</p>
@@ -21,10 +31,11 @@
   {#each app.overlays as o (o.id)}
     <div
       class="overlay"
-      class:selected={app.selected === o.id}
+      class:editing={app.editing === o.id}
       role="group"
-      onfocusin={() => (app.selected = o.id)}
-      onpointerdown={() => (app.selected = o.id)}
+      tabindex="-1"
+      data-edit={o.id}
+      {...editHandlers(o.id)}
     >
       <textarea rows="2" bind:value={o.text} aria-label="Caption text"></textarea>
       <div class="row">
@@ -71,8 +82,11 @@
     border-radius: 6px;
     margin-top: 0.5rem;
   }
-  .overlay.selected {
+  .overlay.editing {
     border-color: var(--accent);
+  }
+  .overlay:focus {
+    outline: none;
   }
   textarea {
     width: 100%;
