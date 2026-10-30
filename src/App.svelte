@@ -30,7 +30,41 @@
     const f = (e.currentTarget as HTMLInputElement).files?.[0];
     if (f) openVideo(f);
   }
+
+  // Dropping a file anywhere opens it (replacing the current video) instead of letting
+  // the browser navigate to it. dragenter/dragleave fire for every child element, so
+  // count them to know when the drag has left the window.
+  let dragDepth = $state(0);
+  const hasFiles = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+
+  function dragEnter(e: DragEvent) {
+    if (hasFiles(e)) dragDepth++;
+  }
+  function dragLeave(e: DragEvent) {
+    if (hasFiles(e)) dragDepth = Math.max(0, dragDepth - 1);
+  }
+  function dragOver(e: DragEvent) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = 'copy';
+  }
+  function drop(e: DragEvent) {
+    dragDepth = 0;
+    // The empty-state drop zone handles its own drops.
+    if (!hasFiles(e) || e.defaultPrevented) return;
+    e.preventDefault();
+    const f = e.dataTransfer!.files[0];
+    if (f) openVideo(f);
+  }
 </script>
+
+<svelte:window ondragenter={dragEnter} ondragleave={dragLeave} ondragover={dragOver} ondrop={drop} />
+
+{#if dragDepth > 0 && app.info}
+  <div class="drop-overlay" aria-hidden="true">
+    <div>Drop to open this video<span>It replaces the current one.</span></div>
+  </div>
+{/if}
 
 <header>
   <h1>Web GIF Creator</h1>
@@ -166,6 +200,31 @@
   .busy progress {
     flex: 1;
     max-width: 420px;
+  }
+  .drop-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.45);
+    pointer-events: none;
+  }
+  .drop-overlay div {
+    display: grid;
+    gap: 0.3rem;
+    text-align: center;
+    padding: 2rem 3rem;
+    border: 2px dashed var(--accent);
+    border-radius: 14px;
+    background: var(--surface);
+    font-size: 1.2rem;
+    font-weight: 600;
+  }
+  .drop-overlay span {
+    font-size: 0.9rem;
+    font-weight: 400;
+    color: var(--muted);
   }
   .unsupported {
     margin: 2rem auto;
