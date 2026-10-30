@@ -53,8 +53,8 @@
       void PreviewSession.open(file, input, $state.snapshot(info) as typeof info, el, onFrame).then((s) => {
         if (cancelled) return s.dispose();
         opened = s;
-        if (canvas) s.attach(canvas);
         sizeCanvas();
+        if (canvas) s.attach(canvas);
         session = s;
       });
     });
@@ -91,11 +91,28 @@
   });
   $effect(() => session?.setRate(playback.rate));
 
+  /**
+   * Match the canvas's pixel size to its size on screen (times the device pixel ratio),
+   * so frames are drawn sharp rather than scaled up from the default 300×150.
+   */
   function sizeCanvas() {
-    if (!stage || !session) return;
+    if (!stage || !canvas || !stage.clientWidth) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const width = Math.min(1920, Math.round(stage.clientWidth * dpr));
-    session.resize(width, Math.round(width / dar));
+    const width = Math.min(3840, Math.round(stage.clientWidth * dpr));
+    const height = Math.round(width / dar);
+    if (canvas.width !== width || canvas.height !== height) {
+      // Setting the size clears the canvas; keep the picture (scaled) until the frame is
+      // redrawn sharp at the new size.
+      let copy: OffscreenCanvas | null = null;
+      if (canvas.width && canvas.height) {
+        copy = new OffscreenCanvas(canvas.width, canvas.height);
+        copy.getContext('2d')?.drawImage(canvas, 0, 0);
+      }
+      canvas.width = width;
+      canvas.height = height;
+      if (copy) canvas.getContext('2d')?.drawImage(copy, 0, 0, width, height);
+    }
+    session?.resize(width, height);
   }
 
   onMount(() => {

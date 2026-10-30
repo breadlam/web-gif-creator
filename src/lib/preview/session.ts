@@ -96,10 +96,6 @@ export class PreviewSession {
   }
 
   resize(width: number, height: number): void {
-    if (this.canvas) {
-      this.canvas.width = width;
-      this.canvas.height = height;
-    }
     this.video?.resize(width, height);
     if (!this.video && this.current) void this.still(this.current.ts);
   }

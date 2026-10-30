@@ -35,6 +35,8 @@ export class VideoView {
   private busy = false;
   private stepTarget: number | null = null;
   private playToken = 0;
+  private playing = false;
+  private redraw: ReturnType<typeof setTimeout> | undefined;
   current: Frame | null = null;
 
   constructor(
@@ -52,14 +54,21 @@ export class VideoView {
     this.resize(canvas.width, canvas.height);
   }
 
-  /** Canvas pixel size changed: cached frames at the old size are dropped. */
+  /**
+   * Canvas pixel size changed: cached frames at the old size are dropped. While paused,
+   * the current frame is redrawn at the new size once resizing pauses (the caller keeps
+   * a scaled copy on screen meanwhile); during playback new frames come at the new size.
+   */
   resize(width: number, height: number): void {
     if (width === this.width && height === this.height) return;
     this.width = width;
     this.height = height;
     this.clearCache();
     this.scratch = width && height ? new OffscreenCanvas(width, height) : null;
-    if (this.current) this.show(this.current.ts);
+    clearTimeout(this.redraw);
+    this.redraw = setTimeout(() => {
+      if (this.current && !this.playing) this.show(this.current.ts);
+    }, 200);
   }
 
   private clearCache(): void {
@@ -191,6 +200,7 @@ export class VideoView {
    */
   play(t: number, clock: () => number): void {
     const token = ++this.playToken;
+    this.playing = true;
     const queue: VideoSample[] = [];
     let wake: (() => void) | null = null;
     const iterator = this.sink.samples(t + this.offset);
@@ -236,10 +246,12 @@ export class VideoView {
 
   stop(): void {
     this.playToken++;
+    this.playing = false;
   }
 
   dispose(): void {
     this.stop();
+    clearTimeout(this.redraw);
     this.clearCache();
   }
 }
