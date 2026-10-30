@@ -151,7 +151,10 @@ export interface Job {
 }
 
 function clipOf(job: Job): Clip {
-  return { input: job.input, video: job.info.videoIndex, start: job.start, duration: job.end - job.start, height: job.height };
+  return {
+    input: job.input, video: job.info.videoIndex, frame: 1 / (job.info.fps || 25),
+    start: job.start, duration: job.end - job.start, height: job.height,
+  };
 }
 
 /** Make a user's font file available to libass. Returns the names it can be matched by. */
@@ -254,7 +257,7 @@ export async function encodeGif(job: Job, fps: number, progress: Progress): Prom
 /** Render one frame through the real scale + text pipeline. */
 export async function previewFrame(job: Pick<Job, 'input' | 'info' | 'height' | 'layers'>, time: number): Promise<Blob> {
   const out = `${WORK}/preview.png`;
-  const r = await engine.exec(previewFrameArgs(job.input, job.info.videoIndex, time, job.height, job.layers, out));
+  const r = await engine.exec(previewFrameArgs(job.input, job.info.videoIndex, time, 1 / (job.info.fps || 25), job.height, job.layers, out));
   if (r.code !== 0) throw new FfmpegError('Rendering the preview frame', r);
   const png = await engine.read(out);
   await engine.remove(out);

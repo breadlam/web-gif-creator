@@ -18,6 +18,8 @@ export interface Clip {
   input: string;
   /** Stream index of the video track to use. */
   video: number;
+  /** Duration of one source frame (seconds). */
+  frame: number;
   start: number;
   duration: number;
   height: number;
@@ -55,15 +57,31 @@ export function textFilters(start: number, layers: TextLayers): string[] {
  * rounding there can shift a frame's time from a line's start to just before it.
  */
 function sourceChain(clip: Clip, fps: number, layers: TextLayers): string {
-  return [scaleFilter(clip.height), ...textFilters(clip.start, layers), `fps=${fpsArg(fps)}`].join(',');
+  // The PTS shift must use the same point ffmpeg seeked to, so subtitle times stay exact.
+  const text = textFilters(seekPoint(clip.start, clip.frame), layers);
+  // The first frame must sit at 0 for the fps filter: after the half-frame-early seek it
+  // sits half a frame in, exactly between fps slots, where rounding can duplicate one
+  // frame and drop another. (textFilters already ends with this reset.)
+  const reset = text.length ? [] : ['setpts=PTS-STARTPTS'];
+  return [scaleFilter(clip.height), ...text, ...reset, `fps=${fpsArg(fps)}`].join(',');
 }
 
 export function fpsArg(fps: number): string {
   return String(Math.round(fps * 1e6) / 1e6);
 }
 
+/**
+ * Where ffmpeg's seek starts: half a frame before the clip start. ffmpeg keeps frames
+ * whose timestamp is at or after the seek point, and containers round timestamps (e.g.
+ * Matroska to the millisecond); seeking half a frame early takes the frame nearest each
+ * boundary, so that rounding can't add or drop a frame at either end.
+ */
+export function seekPoint(start: number, frame: number): number {
+  return Math.max(0, start - frame / 2);
+}
+
 function seekArgs(clip: Clip): string[] {
-  return ['-ss', ffTime(clip.start), '-t', ffTime(clip.duration), '-i', clip.input];
+  return ['-ss', ffTime(seekPoint(clip.start, clip.frame)), '-t', ffTime(clip.duration), '-i', clip.input];
 }
 
 export function featureFile(f: Feature): string {
@@ -101,9 +119,12 @@ export function encodeArgs(clip: Clip, fps: number, dither: Dither, layers: Text
 }
 
 /** One frame through the real scale + text pipeline, for checking text placement. */
-export function previewFrameArgs(input: string, video: number, time: number, height: number, layers: TextLayers, out: string): string[] {
-  const vf = [scaleFilter(height), ...textFilters(time, layers)].join(',');
-  return [...BASE, '-y', '-ss', ffTime(time), '-i', input, '-map', `0:${video}`, '-frames:v', '1', '-vf', vf, out];
+export function previewFrameArgs(
+  input: string, video: number, time: number, frame: number, height: number, layers: TextLayers, out: string,
+): string[] {
+  const seek = seekPoint(time, frame);
+  const vf = [scaleFilter(height), ...textFilters(seek, layers)].join(',');
+  return [...BASE, '-y', '-ss', ffTime(seek), '-i', input, '-map', `0:${video}`, '-frames:v', '1', '-vf', vf, out];
 }
 
 /** A still frame for videos (or video tracks) the browser can't play. */

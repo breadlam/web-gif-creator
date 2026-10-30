@@ -204,16 +204,17 @@ describe('probe', () => {
 });
 
 describe('commands', () => {
-  const clip = { input: '/input/input.mkv', video: 0, start: 61.5, duration: 4, height: 540 };
+  const clip = { input: '/input/input.mkv', video: 0, frame: 0.04, start: 61.5, duration: 4, height: 540 };
 
   it('builds the encode graph used for calibration', () => {
     const args = encodeArgs(clip, 15, { mode: 'sierra2_4a', bayerScale: 2 } as const, {}, '/work/out.gif');
     const graph = args[args.indexOf('-filter_complex') + 1];
     expect(graph).toBe(
-      `[0:0]${scaleFilter(540)},fps=15,split=3[n][a][b];[a]palettegen=stats_mode=diff[p];` +
+      `[0:0]${scaleFilter(540)},setpts=PTS-STARTPTS,fps=15,split=3[n][a][b];[a]palettegen=stats_mode=diff[p];` +
         '[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle[g]',
     );
-    expect(args.slice(0, 10)).toEqual(['-hide_banner', '-loglevel', 'info', '-y', '-ss', '61.500', '-t', '4.000', '-i', '/input/input.mkv']);
+    // Seek half a frame early so container timestamp rounding can't drop the first frame.
+    expect(args.slice(0, 10)).toEqual(['-hide_banner', '-loglevel', 'info', '-y', '-ss', '61.480', '-t', '4.000', '-i', '/input/input.mkv']);
     expect(args.slice(-5)).toEqual(['-map', '[g]', '-loop', '0', '/work/out.gif']);
   });
 
@@ -222,8 +223,9 @@ describe('commands', () => {
       'setpts=PTS+61.501/TB', 'subtitles=filename=/work/o.ass:fontsdir=/fonts', 'setpts=PTS-STARTPTS',
     ]);
     // Burned in before fps, while the time base is still fine-grained.
-    const args = encodeArgs({ input: 'in', video: 0, start: 61.5, duration: 2, height: 540 }, 15, { mode: 'bayer', bayerScale: 2 }, { subtitles: '/work/s.ass' }, 'o.gif');
-    expect(args[args.indexOf('-filter_complex') + 1]).toMatch(/setsar=1,setpts=PTS\+61\.501\/TB,subtitles=[^,]+,setpts=PTS-STARTPTS,fps=15,split=3/);
+    const args = encodeArgs({ input: 'in', video: 0, frame: 0.04, start: 61.5, duration: 2, height: 540 }, 15, { mode: 'bayer', bayerScale: 2 }, { subtitles: '/work/s.ass' }, 'o.gif');
+    // The shift uses the same point ffmpeg seeked to (61.48), plus the 1 ms nudge.
+    expect(args[args.indexOf('-filter_complex') + 1]).toMatch(/setsar=1,setpts=PTS\+61\.481\/TB,subtitles=[^,]+,setpts=PTS-STARTPTS,fps=15,split=3/);
     expect(textFilters(0, {})).toEqual([]);
   });
 
@@ -241,7 +243,8 @@ describe('commands', () => {
   it('targets the selected video track explicitly', () => {
     const args = encodeArgs({ ...clip, video: 6 }, 15, { mode: 'sierra2_4a', bayerScale: 2 } as const, {}, '/work/out.gif');
     expect(args[args.indexOf('-filter_complex') + 1]).toMatch(/^\[0:6\]scale=/);
-    const pre = previewFrameArgs('/input/a.mkv', 6, 3, 540, {}, '/work/p.png');
+    const pre = previewFrameArgs('/input/a.mkv', 6, 3, 0.04, 540, {}, '/work/p.png');
+    expect(pre.slice(pre.indexOf('-ss'), pre.indexOf('-ss') + 2)).toEqual(['-ss', '2.980']);
     expect(pre.slice(pre.indexOf('-map'), pre.indexOf('-map') + 2)).toEqual(['-map', '0:6']);
   });
 
