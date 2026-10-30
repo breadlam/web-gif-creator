@@ -27,6 +27,10 @@ export class PreviewSession {
   private rate = 1;
   private clockBase = { at: 0, t: 0 };
   private token = 0;
+  /** Frames starting at or after this aren't drawn (see VideoView.play). */
+  private until = Infinity;
+  /** While starting playback, the clock stays at clockBase.t (see play). */
+  private held = false;
   private stillToken = 0;
   private lastStill = -Infinity;
   current: Frame | null = null;
@@ -139,6 +143,7 @@ export class PreviewSession {
    * sound, or the browser blocked it), so the video never waits on silence.
    */
   clock(): number {
+    if (this.held) return this.clockBase.t;
     if (this.audio && this.playing && !this.audioEl.paused) {
       const t = this.audio.time();
       if (!Number.isNaN(t)) return t;
@@ -148,19 +153,29 @@ export class PreviewSession {
 
   /**
    * Play from t. onTick receives the clock each animation frame; the caller decides when
-   * the clip has ended. Resolves once playback has started (after sound is decoded).
+   * the clip has ended. No frame starting at or after `until` is drawn. Resolves once
+   * playback has started (after sound is decoded).
    */
-  async play(t: number, onTick: (t: number) => void): Promise<void> {
+  async play(t: number, onTick: (t: number) => void, until = Infinity): Promise<void> {
     this.stop();
     const token = ++this.token;
+    this.until = until;
     this.playing = true;
+    // Hold the clock at t until the first frame is decoded and the sound is ready.
+    // Otherwise playback (each loop of a clip, too) opens by dropping frames that are
+    // already late by the time they're decoded.
+    this.held = true;
+    this.clockBase = { at: performance.now(), t };
+    const firstFrame = this.video?.play(t, () => this.clock(), until);
     if (this.audio) {
       await this.audio.prepare(t);
       if (token !== this.token) return;
-      await this.audio.play(t).catch(() => undefined); // blocked: the clock falls back to wall time
     }
+    await firstFrame;
+    if (token !== this.token) return;
+    if (this.audio) await this.audio.play(t).catch(() => undefined); // blocked: the clock falls back to wall time
     this.clockBase = { at: performance.now(), t };
-    this.video?.play(t, () => this.clock());
+    this.held = false;
     const tick = () => {
       if (token !== this.token) return;
       const now = this.clock();
@@ -183,7 +198,7 @@ export class PreviewSession {
     this.video?.stop();
     this.audio!.pause();
     await this.audio!.prepare(t).catch(() => undefined);
-    if (token === this.token) void this.play(t, onTick);
+    if (token === this.token) void this.play(t, onTick, this.until);
   }
 
   /** Stop playback, leaving the last frame on screen. */

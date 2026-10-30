@@ -125,7 +125,7 @@
       clearTimeout(settle);
       scrubbing = false;
       app.current = time;
-      if (playback.playing) void session?.play(time, onTick);
+      if (playback.playing) void session?.play(time, onTick, lastFrameLimit());
       else session?.show(time);
     };
     controls.scrub = (t) => {
@@ -163,7 +163,7 @@
     playback.playing = true;
     if (soundSource !== 'none') soundState = 'loading';
     try {
-      await session.play(from, onTick);
+      await session.play(from, onTick, lastFrameLimit());
       soundState = '';
     } catch (e) {
       soundState = `Couldn't play the sound: ${e instanceof Error ? e.message : e}`;
@@ -177,9 +177,17 @@
     if (t >= app.end - 1e-3) reachedEnd();
   }
 
+  /**
+   * Playback draws only frames starting before this: half a frame short of the clip end,
+   * the same cut the encoder makes (see seekPoint), so it shows exactly the GIF's frames.
+   */
+  function lastFrameLimit(): number {
+    return app.end - frameDuration() / 2;
+  }
+
   /** Playback hit the clip end (or the end of the video). */
   function reachedEnd() {
-    if (playback.loop) void session?.play(app.start, onTick);
+    if (playback.loop) void session?.play(app.start, onTick, lastFrameLimit());
     else {
       stop();
       session?.show(Math.max(app.start, app.end - frameDuration()));

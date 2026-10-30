@@ -220,14 +220,21 @@ export class VideoView {
 
   /**
    * Play from time t, drawing each frame when clock() (app time) reaches it. Late frames
-   * are dropped rather than slowing the clock down.
+   * are dropped rather than slowing the clock down. Frames are those starting in
+   * [t − ½ frame, until), the encoder's rule (see seekPoint): playback opens on the frame
+   * nearest t, and a clip's playback can't show a frame past its end before it loops or
+   * stops. Resolves once the first frame is decoded (or decoding ends).
    */
-  play(t: number, clock: () => number): void {
+  play(t: number, clock: () => number, until = Infinity): Promise<void> {
     const token = ++this.playToken;
+    const limit = until + this.offset;
     this.playing = true;
     const queue: VideoSample[] = [];
     let wake: (() => void) | null = null;
-    const iterator = this.sink.samples(t + this.offset);
+    let ready!: () => void;
+    const first = new Promise<void>((r) => (ready = r));
+    const from = t + this.offset - 0.5 / this.fps;
+    const iterator = this.sink.samples(from);
     void (async () => {
       try {
         for await (const sample of iterator) {
@@ -235,11 +242,18 @@ export class VideoView {
             sample.close();
             break;
           }
+          if (sample.timestamp < from) {
+            sample.close();
+            continue;
+          }
           queue.push(sample);
+          ready();
           while (queue.length >= PLAY_QUEUE && token === this.playToken) await new Promise<void>((r) => (wake = r));
         }
       } catch {
         // Playback stopped mid-decode.
+      } finally {
+        ready();
       }
     })();
     const tick = () => {
@@ -251,7 +265,7 @@ export class VideoView {
       }
       const now = clock() + this.offset;
       let show: VideoSample | undefined;
-      while (queue.length && queue[0].timestamp <= now) {
+      while (queue.length && queue[0].timestamp <= now && queue[0].timestamp < limit) {
         show?.close();
         show = queue.shift();
       }
@@ -266,6 +280,7 @@ export class VideoView {
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
+    return first;
   }
 
   stop(): void {
