@@ -53,7 +53,9 @@
       </div>
       <div class="row">
         <label class="row mini">From <input class="mono" size="9" value={formatTime(o.start, 2)} onchange={(e) => setTime(o, 'start', e.currentTarget.value)} /></label>
+        <button class="small" onclick={() => (o.start = app.current)} title="Set the start to the playhead time" aria-label="Set caption start to playhead">Now</button>
         <label class="row mini">to <input class="mono" size="9" value={formatTime(o.end, 2)} onchange={(e) => setTime(o, 'end', e.currentTarget.value)} /></label>
+        <button class="small" onclick={() => (o.end = app.current)} title="Set the end to the playhead time" aria-label="Set caption end to playhead">Now</button>
         <button class="small" onclick={() => ((o.start = app.start), (o.end = app.end))}>Whole clip</button>
         <button class="small" onclick={() => (o.x = 0.5)}>Centre</button>
         <button class="small danger" onclick={() => removeOverlay(o.id)}>Remove</button>
