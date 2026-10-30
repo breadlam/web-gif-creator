@@ -83,13 +83,13 @@ async function runVideo(browser, url, video, index) {
       result.subtitleLinesInClip = await subs.locator('ul:not(.browse) li').count();
       result.subtitlePreview = await page.locator('.frame .text.subtitle').textContent().catch(() => null);
     } else {
-      const field = (label) => page.locator('.timeline label.field', { hasText: label }).locator('input');
+      const field = (label) => page.getByLabel(`Clip ${label.toLowerCase()} time`);
       await field('End').fill('0:06');
       await field('End').press('Tab');
       await field('Start').fill('0:02');
       await field('Start').press('Tab');
     }
-    result.range = await page.locator('.timeline label.field input').evaluateAll((els) => els.map((e) => e.value));
+    result.range = [await page.getByLabel('Clip start time').inputValue(), await page.getByLabel('Clip end time').inputValue()];
 
     await page.getByRole('button', { name: 'Add text' }).click();
     await page.locator('textarea').first().fill('E2E caption');

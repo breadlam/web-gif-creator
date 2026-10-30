@@ -13,6 +13,7 @@
   const LIMIT: Record<string, string> = {
     budget: 'limited by the size budget',
     source: 'limited by the source frame rate',
+    cap: 'capped at 30 fps; pick a fixed rate for more',
     gif: 'limited by GIF playback (50 fps max)',
     manual: 'fixed frame rate',
   };

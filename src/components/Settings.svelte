@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { calibratedHeights, DITHERS, modelFor } from '../lib/sizeModel';
+  import { AUTO_MAX_FPS, calibratedHeights, DITHERS, modelFor } from '../lib/sizeModel';
   import { app, outputSize } from '../state.svelte';
-  import NumberField from './NumberField.svelte';
+  import PresetSelect from './PresetSelect.svelte';
 
   const s = $derived(app.settings);
   const size = $derived(outputSize());
@@ -12,22 +12,45 @@
   const SIZES_MB = [1, 2, 5, 8, 10, 15, 20, 25, 50, 100].map((v) => ({ value: v, label: `${v} MB` }));
   const HEIGHTS = $derived([
     ...(sourceHeight ? [{ value: sourceHeight, label: `Source (${sourceHeight}p)` }] : []),
-    ...[2160, 1440, 1080, 720, 576, 540, 480, 360, 270, 240, 180, 144].map((v) => ({ value: v, label: `${v}p` })),
+    ...[2160, 1440, 1080, 720, 576, 540, 480, 360, 270, 240, 180, 144]
+      .filter((v) => v !== sourceHeight)
+      .map((v) => ({ value: v, label: `${v}p` })),
   ]);
-  const WIDTHS = [1920, 1280, 1024, 960, 854, 800, 720, 640, 600, 480, 400, 320, 240].map((v) => ({ value: v, label: `${v} px` }));
-  const RATES = [
-    5, 8, 10, 12, 12.5, 15, 100 / 6, 20, 23.976, 24, 25, 29.97, 30, 100 / 3, 50,
-  ].map((v) => ({ value: Math.round(v * 1000) / 1000, label: `${Math.round(v * 100) / 100} fps` }));
+  // GIFs rarely benefit from more than 30 fps; 100/n rates give perfectly even frame timing.
+  const RATES = [30, 25, 24, 20, 100 / 6, 15, 100 / 7, 12.5, 12, 100 / 9, 10, 8, 5].map((v) => ({
+    value: v,
+    label: `${Math.round(v * 100) / 100} fps`,
+  }));
 
-  /** Height for a requested width at the source aspect ratio, rounded to even. */
-  function heightForWidth(w: number): number {
-    const dar = app.info?.dar ?? 16 / 9;
-    return Math.max(2, Math.round(w / dar / 2) * 2);
+  // One dropdown for the frame rate: calculated, a preset, or custom.
+  const AUTO = 'auto';
+  const CUSTOM = 'custom';
+  let customFps = $state(false);
+  const rateIndex = $derived(RATES.findIndex((r) => Math.abs(r.value - s.manualFps) < 1e-3));
+  const rateChoice = $derived(s.fpsMode === 'auto' ? AUTO : customFps || rateIndex < 0 ? CUSTOM : String(rateIndex));
+  let fpsDraft = $state('');
+  $effect(() => {
+    fpsDraft = String(Math.round(s.manualFps * 1000) / 1000);
+  });
+
+  function pickRate(v: string) {
+    if (v === AUTO) {
+      app.settings.fpsMode = 'auto';
+      customFps = false;
+    } else if (v === CUSTOM) {
+      app.settings.fpsMode = 'manual';
+      customFps = true;
+    } else {
+      app.settings.fpsMode = 'manual';
+      app.settings.manualFps = RATES[Number(v)].value;
+      customFps = false;
+    }
   }
 
-  /** The rate a fixed fps becomes with even frame timing (100/n). */
-  function evenRate(fps: number): number {
-    return 100 / Math.max(2, Math.ceil(100 / fps - 1e-9));
+  function commitFps() {
+    const v = parseFloat(fpsDraft);
+    if (Number.isFinite(v)) app.settings.manualFps = Math.min(1000, Math.max(0.1, v));
+    fpsDraft = String(Math.round(s.manualFps * 1000) / 1000);
   }
 </script>
 
@@ -35,22 +58,33 @@
   <h2>Output</h2>
   <div class="fields">
     <span class="label">Max size</span>
-    <NumberField label="Max file size" bind:value={app.settings.maxMB} min={0.05} max={10000} suffix="MB" presets={SIZES_MB} />
+    <PresetSelect label="Max file size" bind:value={app.settings.maxMB} presets={SIZES_MB} min={0.05} max={10000} suffix="MB" />
 
-    <span class="label">Size</span>
-    <span class="size">
-      <NumberField
-        label="Width"
-        value={size.width}
-        min={16}
-        max={7680}
-        even
-        size={5}
-        presets={WIDTHS}
-        onchange={(w) => (app.settings.height = heightForWidth(w))}
-      />
-      <span class="muted">×</span>
-      <NumberField label="Height" bind:value={app.settings.height} min={16} max={4320} even size={5} presets={HEIGHTS} />
+    <span class="label">Height</span>
+    <span class="row">
+      <PresetSelect label="Height" bind:value={app.settings.height} presets={HEIGHTS} min={16} max={4320} even suffix="px" />
+      <span class="muted dims">{size.width}×{size.height}</span>
+    </span>
+
+    <span class="label">Frame rate</span>
+    <span class="row">
+      <select value={rateChoice} onchange={(e) => pickRate(e.currentTarget.value)} aria-label="Frame rate">
+        <option value={AUTO}>Max for size (up to {AUTO_MAX_FPS} fps)</option>
+        {#each RATES as r, i}<option value={String(i)}>{r.label}</option>{/each}
+        <option value={CUSTOM}>Custom…</option>
+      </select>
+      {#if rateChoice === CUSTOM}
+        <input
+          class="fps"
+          type="text"
+          inputmode="decimal"
+          aria-label="Frame rate (custom)"
+          bind:value={fpsDraft}
+          onchange={commitFps}
+          onkeydown={(e) => e.key === 'Enter' && commitFps()}
+        />
+        <span class="muted">fps</span>
+      {/if}
     </span>
 
     <span class="label">Dithering</span>
@@ -59,40 +93,22 @@
         {#each DITHERS as d}<option value={d.id}>{d.label}</option>{/each}
       </select>
       {#if s.dither === 'bayer'}
-        <label class="row mini">
-          Scale
-          <NumberField label="Bayer scale" bind:value={app.settings.bayerScale} min={0} max={5} integer size={2} />
-        </label>
-      {/if}
-    </span>
-
-    <span class="label">Frame rate</span>
-    <span class="row">
-      <select bind:value={app.settings.fpsMode} aria-label="Frame rate mode">
-        <option value="auto">Max for size</option>
-        <option value="manual">Fixed</option>
-      </select>
-      {#if s.fpsMode === 'manual'}
-        <NumberField label="Frames per second" bind:value={app.settings.manualFps} min={0.1} max={50} suffix="fps" size={5} presets={RATES} />
+        <select bind:value={app.settings.bayerScale} aria-label="Bayer scale">
+          {#each [0, 1, 2, 3, 4, 5] as n}<option value={n}>Scale {n}{n === 0 ? ' (strongest)' : n === 5 ? ' (subtlest)' : ''}</option>{/each}
+        </select>
       {/if}
     </span>
   </div>
 
-  <label class="row check">
-    <input type="checkbox" bind:checked={app.settings.uniform} />
-    Even frame timing (rates of 100/n: 50, 33.3, 25, 20, 16.7…)
-  </label>
-
   <div class="notes muted">
-    {#if s.dither === 'bayer'}<p>Bayer scale 0 is the strongest pattern, 5 the subtlest.</p>{/if}
     {#if sourceHeight && s.height > sourceHeight}
       <p class="warn">Larger than the source ({sourceHeight}p), so the video will be upscaled.</p>
     {/if}
     {#if s.height < calLow || s.height > calHigh}
       <p>Size estimates were calibrated at {calLow}–{calHigh}p; at {s.height}p they're extrapolated and less certain.</p>
     {/if}
-    {#if s.fpsMode === 'manual' && s.uniform && Math.abs(evenRate(s.manualFps) - s.manualFps) > 0.005}
-      <p>With even frame timing, {s.manualFps} fps becomes {evenRate(s.manualFps).toFixed(2)} fps.</p>
+    {#if s.fpsMode === 'manual' && s.manualFps > 50}
+      <p>Browsers play GIFs faster than 50 fps more slowly, so 50 is the maximum.</p>
     {/if}
     {#if s.fpsMode === 'manual' && app.info && s.manualFps > app.info.fps + 0.01}
       <p>The source is {app.info.fps.toFixed(2)} fps; a higher rate would only repeat frames, so it's capped there.</p>
@@ -110,29 +126,20 @@
   .fields {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
-    gap: 0.5rem 0.7rem;
+    gap: 0.55rem 0.7rem;
     align-items: center;
   }
   .label {
     font-size: 0.88rem;
     color: var(--muted);
   }
-  .size {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.3rem;
+  .dims {
+    font-size: 0.82rem;
+    font-variant-numeric: tabular-nums;
   }
-  .mini {
-    gap: 0.3rem;
-    font-size: 0.85rem;
-    color: var(--muted);
-  }
-  .check {
-    margin-top: 0.7rem;
-    font-size: 0.88rem;
-    gap: 0.4rem;
-    flex-wrap: nowrap;
+  .fps {
+    width: calc(7ch + 1.2rem);
+    font-variant-numeric: tabular-nums;
   }
   .notes {
     font-size: 0.82rem;

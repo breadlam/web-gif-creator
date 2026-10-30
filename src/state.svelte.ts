@@ -21,12 +21,11 @@ export interface Settings {
   bayerScale: number;
   fpsMode: 'auto' | 'manual';
   manualFps: number;
-  uniform: boolean;
   subtitleStyle: SubtitleStyle;
 }
 
 const DEFAULTS: Settings = {
-  maxMB: 20, height: 540, dither: 'sierra2_4a', bayerScale: 2, fpsMode: 'auto', manualFps: 15, uniform: true,
+  maxMB: 20, height: 540, dither: 'sierra2_4a', bayerScale: 2, fpsMode: 'auto', manualFps: 15,
   subtitleStyle: { ...DEFAULT_SUBTITLE_STYLE },
 };
 const SETTINGS_KEY = 'web-gif-creator.settings';
@@ -101,9 +100,38 @@ export const playback = $state({ playing: false, loop: true, volume: 1, muted: f
 
 /** Registered by Player so other components can drive the video. */
 export const controls = {
+  /** Jump (or scrub) to a time. */
   seek: (_t: number) => {},
   toggle: () => {},
+  /** Step by whole source frames; repeated calls (a held arrow key) scrub. */
+  step: (_frames: number) => {},
 };
+
+export function frameDuration(): number {
+  return 1 / (app.info?.fps || 25);
+}
+
+/** Start time of the source frame shown at time t. */
+function frameStart(t: number): number {
+  const fps = app.info?.fps || 25;
+  return Math.floor(t * fps + 1e-3) / fps;
+}
+
+/** Start the clip at the frame on screen. If that's at or past the end, the end follows. */
+export function setStartHere(t = app.current): void {
+  const f = frameDuration();
+  const duration = app.info?.duration ?? 0;
+  app.start = Math.max(0, Math.min(frameStart(t), duration - f));
+  if (app.end <= app.start) app.end = Math.min(duration, app.start + f);
+}
+
+/** End the clip after the frame on screen, so that frame is included. */
+export function setEndHere(t = app.current): void {
+  const f = frameDuration();
+  const duration = app.info?.duration ?? 0;
+  app.end = Math.min(duration, frameStart(t) + f);
+  if (app.start >= app.end) app.start = Math.max(0, app.end - f);
+}
 
 engine.onLog((line) => {
   app.log.push(line);
@@ -150,7 +178,7 @@ export function audioSource(): AudioSource {
 export function planKey(): string {
   const s = app.settings;
   return JSON.stringify([
-    app.input, app.info?.videoIndex, app.start, app.end, s.maxMB, s.height, s.dither, s.bayerScale, s.uniform, s.fpsMode, s.manualFps,
+    app.input, app.info?.videoIndex, app.start, app.end, s.maxMB, s.height, s.dither, s.bayerScale, s.fpsMode, s.manualFps,
     app.track, app.subMode, app.subMode === 'custom' ? s.subtitleStyle : null, app.disabledCues,
     app.cueOverrides, app.overlays,
   ]);
@@ -289,7 +317,7 @@ export async function calculate(): Promise<Plan | undefined> {
   const plan = await run('Analysing motion', async (progress) =>
     planClip(await job(), {
       budget: s.maxMB * 1e6,
-      uniform: s.uniform,
+      uniform: false,
       manualFps: s.fpsMode === 'manual' ? s.manualFps : null,
     }, progress),
   );
@@ -322,7 +350,7 @@ export async function encode(fpsOverride?: number): Promise<void> {
 
 /** Frame rate to retry at when a GIF came out over budget. */
 export function retryFps(o: Output): number {
-  return snapFps(o.fps * (o.budget / o.bytes) * 0.97, app.settings.uniform).fps;
+  return snapFps(o.fps * (o.budget / o.bytes) * 0.97, false).fps;
 }
 
 export async function renderPreview(): Promise<void> {

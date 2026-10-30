@@ -31,11 +31,11 @@
         <FontSelect bind:value={o.font} label="Caption font" />
         <span class="row mini">
           Size <input type="range" min="2" max="30" step="0.5" bind:value={o.size} aria-label="Caption size slider" />
-          <NumberField label="Caption size" bind:value={o.size} min={0.5} max={100} suffix="%" size={4} />
+          <NumberField label="Caption size" bind:value={o.size} min={0.5} max={100} suffix="%" />
         </span>
         <span class="row mini">
           Outline <input type="range" min="0" max="3" step="0.1" bind:value={o.outline} aria-label="Caption outline slider" />
-          <NumberField label="Caption outline" bind:value={o.outline} min={0} max={20} suffix="%" size={4} />
+          <NumberField label="Caption outline" bind:value={o.outline} min={0} max={20} suffix="%" />
         </span>
         <input type="color" bind:value={o.color} aria-label="Text colour" />
         <input type="color" bind:value={o.outlineColor} aria-label="Outline colour" />

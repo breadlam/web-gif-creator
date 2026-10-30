@@ -1,36 +1,22 @@
 <script lang="ts">
-  /**
-   * A number input that accepts any value in [min, max], with optional presets as a
-   * shortcut. Presets use a plain <select> (Firefox shows no datalist on number inputs).
-   */
-  interface Preset {
-    value: number;
-    label?: string;
-  }
-
+  /** A free-entry number field: any value in [min, max], committed on Enter or blur. */
   let {
     value = $bindable(),
     min = -Infinity,
     max = Infinity,
     integer = false,
-    even = false,
-    presets = [],
     label,
     suffix = '',
-    size = 6,
-    onchange,
+    size = 5,
   }: {
     value: number;
     min?: number;
     max?: number;
     integer?: boolean;
-    /** Round to an even number (video dimensions). */
-    even?: boolean;
-    presets?: Preset[];
     label: string;
     suffix?: string;
+    /** Width in digits. */
     size?: number;
-    onchange?: (v: number) => void;
   } = $props();
 
   let draft = $state('');
@@ -42,62 +28,43 @@
     return Number.isFinite(v) ? String(Math.round(v * 1000) / 1000) : '';
   }
 
-  function commit(raw: string) {
-    let v = parseFloat(raw);
+  function commit() {
+    let v = parseFloat(draft);
     if (!Number.isFinite(v)) {
       draft = format(value);
       return;
     }
     v = Math.min(max, Math.max(min, v));
     if (integer) v = Math.round(v);
-    if (even) v = Math.max(2, Math.round(v / 2) * 2);
     value = v;
     draft = format(v);
-    onchange?.(v);
   }
 </script>
 
 <span class="number-field">
   <input
-    type="number"
-    step="any"
+    type="text"
     inputmode="decimal"
-    {min}
-    {max}
-    style:width="{size + 1.5}ch"
+    style:width="calc({size}ch + 1.2rem)"
     aria-label={label}
     bind:value={draft}
-    onchange={(e) => commit(e.currentTarget.value)}
-    onkeydown={(e) => e.key === 'Enter' && commit(e.currentTarget.value)}
+    onchange={commit}
+    onkeydown={(e) => e.key === 'Enter' && commit()}
   />
   {#if suffix}<span class="suffix">{suffix}</span>{/if}
-  {#if presets.length}
-    <select
-      aria-label="{label} presets"
-      value=""
-      onchange={(e) => {
-        const v = e.currentTarget.value;
-        e.currentTarget.value = '';
-        if (v !== '') commit(v);
-      }}
-    >
-      <option value="" disabled>Presets</option>
-      {#each presets as p}<option value={p.value}>{p.label ?? p.value}</option>{/each}
-    </select>
-  {/if}
 </span>
 
 <style>
   .number-field {
     display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
+    gap: 0.25rem;
+  }
+  input {
+    font-variant-numeric: tabular-nums;
   }
   .suffix {
     color: var(--muted);
     font-size: 0.85rem;
-  }
-  select {
-    max-width: 7rem;
   }
 </style>

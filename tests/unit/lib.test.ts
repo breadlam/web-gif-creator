@@ -48,6 +48,12 @@ describe('size model', () => {
     expect(p.fps).toBeGreaterThan(10);
   });
 
+  it('caps the calculated rate', () => {
+    const p = planFps({ budget: 20e6, duration: 1, width: 480, height: 270, k: { expected: 0.2, safe: 0.25 }, sourceFps: 60, uniform: false, maxFps: 30 });
+    expect(p.limitedBy).toBe('cap');
+    expect(p.fps).toBe(30);
+  });
+
   it('caps at the source frame rate', () => {
     const p = planFps({ budget: 20e6, duration: 2, width: 960, height: 540, k: { expected: 0.2, safe: 0.25 }, sourceFps: 23.976, uniform: true });
     expect(p.limitedBy).toBe('source');

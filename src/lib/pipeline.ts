@@ -9,7 +9,7 @@ import { bundledFonts } from './fonts';
 import { featureValue, parseFrameProgress, parseTimeProgress } from './metadata';
 import { outputWidth, parseProbe, type MediaInfo } from './probe';
 import {
-  estimateK, frameCount, gifBytes, modelFor, planFps, snapFps,
+  AUTO_MAX_FPS, estimateK, frameCount, gifBytes, MAX_GIF_FPS, modelFor, planFps, snapFps,
   type Dither, type FpsPlan, type KEstimate,
 } from './sizeModel';
 import { applyOverrides, buildSubtitleAss, overlapping, type SubtitleMode, type SubtitleStyle } from './subtitles';
@@ -190,6 +190,7 @@ export interface Plan extends FpsPlan {
 
 export interface PlanOptions {
   budget: number;
+  /** Restrict rates to 100/n (perfectly even frame delays). */
   uniform: boolean;
   /** Fixed frame rate; when null the maximum rate for the budget is calculated. */
   manualFps: number | null;
@@ -210,13 +211,17 @@ export async function planClip(job: Job, opts: PlanOptions, progress: Progress):
     if (opts.manualFps !== null) {
       const snapped = snapFps(Math.min(opts.manualFps, source), opts.uniform);
       const frames = frameCount(duration, snapped.fps);
+      const limitedBy = opts.manualFps > MAX_GIF_FPS && source > MAX_GIF_FPS ? 'gif' : opts.manualFps > source ? 'source' : 'manual';
       return {
-        ...base, ...snapped, frames, limitedBy: opts.manualFps > source ? 'source' : 'manual',
+        ...base, ...snapped, frames, limitedBy,
         expectedBytes: gifBytes(frames, width, job.height, k.expected),
         safeBytes: gifBytes(frames, width, job.height, k.safe),
       };
     }
-    return { ...base, ...planFps({ budget: opts.budget, duration, width, height: job.height, k, sourceFps: source, uniform: opts.uniform }) };
+    return {
+      ...base,
+      ...planFps({ budget: opts.budget, duration, width, height: job.height, k, sourceFps: source, uniform: opts.uniform, maxFps: AUTO_MAX_FPS }),
+    };
   };
   const first = opts.manualFps ?? Math.min(source, 15);
   let plan = make(await measure(job, first, progress), first);

@@ -4,18 +4,19 @@ Turn video clips into high-quality GIFs in the browser, sized to fit a file-size
 Everything runs locally with [ffmpeg.wasm](https://github.com/ffmpegwasm/ffmpeg.wasm); the
 video is never uploaded. Deploys as a static site to GitHub Pages.
 
-- Trim with a timeline, frame stepping and keyboard shortcuts, with sound (volume, mute,
-  0.5×–1.25× speed). If the browser can't play the file's audio (AC-3/DTS, a second audio
+- Trim on one full-length scrub bar: drag to scrub, ←/→ step a frame (hold to scrub),
+  then set the frame on screen as the clip's start or end. With sound (volume, mute,
+  speed). If the browser can't play the file's audio (AC-3/DTS, a second audio
   track, files it can't play at all), ffmpeg decodes the sound instead.
 - Choose which video, audio and subtitle track to work with.
-- Set a max file size (default 20 MB) and output size (default 540p; type any width or
-  height, or pick a preset). The frame rate is *calculated* from one quick analysis pass,
-  not found by trial encodes, or can be fixed at any rate up to 50 fps.
+- Set a max file size (default 20 MB) and height (default 540p). Each setting is a
+  dropdown of presets with a Custom… entry for any value. The frame rate is *calculated*
+  from one quick analysis pass (up to 30 fps), not found by trial encodes, or can be fixed
+  at any rate up to 50 fps.
 - ffmpeg's `palettegen` → `paletteuse` pipeline, with every FFmpeg 5.1.4 dithering mode
   (including Bayer at any `bayer_scale`), each with its own calibrated size model.
 - Captions and subtitles in the bundled fonts, fonts embedded in the video, or any
-  TTF/OTF file you add. Every size, outline and speed field accepts typed values; presets
-  are just shortcuts.
+  TTF/OTF file you add.
 - Subtitles are read from the video when it opens (ASS/SSA/SRT/WebVTT, with embedded
   fonts). The dialogue track is picked automatically, and lines show on the preview. Search
   lines and press **Clip** to set the range to a line. Burn them in with the original

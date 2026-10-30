@@ -24,7 +24,7 @@ trim → scale (540p default) → frame rate that fits a size budget (20 MB defa
 ```
 Browser main thread (Svelte UI)
  ├─ <video> preview (object URL of the file), or ffmpeg-rendered stills if it can't play
- ├─ Timeline: whole-video + zoomed bars, in/out handles, frame stepping, keyboard shortcuts
+ ├─ Timeline: one scrub bar, frame stepping, set start/end from the frame on screen
  ├─ Text overlays: HTML preview with libass-matched sizing, drag to position
  └─ state.svelte.ts: actions → lib/pipeline.ts → lib/engine.ts
                                                   │  (serialised, one wasm instance)
@@ -97,7 +97,7 @@ nudge in the timestamp shift covers the remaining rounding.
 - `-ss` before `-i` resets timestamps to 0, but ASS times are source times. Hence the
   `setpts` shift around `subtitles=`.
 - GIF delays are whole centiseconds, and browsers show ≤ 1 cs as 10 cs, so 50 fps is the
-  maximum. "Even frame timing" restricts rates to 100/n.
+  maximum. Rates of 100/n (25, 20, 16.67…) give perfectly even delays; others mix delays.
 
 ## 4. Frame-rate calculation
 
@@ -146,15 +146,17 @@ or allow a one-frame encode as a complexity measurement. That cut the over-budge
 Working (verified end-to-end in Chromium with the real ffmpeg.wasm):
 
 - open MP4/MKV/WebM, probe, AV1 detection
-- free-form values everywhere, with presets as shortcuts:
-  - linked width/height fields (any even size; notes for upscaling and outside the
-    calibrated 360–720p range)
-  - max size, a fixed frame rate (decimals; mixed delays when even timing is off), and every
-    paletteuse dithering mode including `bayer_scale`
-  - caption/subtitle size and outline, and playback speed
+- free-form values everywhere: preset dropdowns with a Custom… entry
+  - height (any even value; notes for upscaling and outside the calibrated 360–720p range)
+  - max size, frame rate (presets ≤ 30 fps, "max for size" capped at 30, custom up to 50;
+    ffmpeg mixes centisecond delays for rates that aren't 100/n), and playback speed
+  - every paletteuse dithering mode, including `bayer_scale`
+  - caption/subtitle size and outline (sliders plus typed values)
   - fonts: bundled, embedded in the video, or user-added files (family, weight and libass
     size metrics read from the file)
-- trim UI with frame stepping and shortcuts
+- trimming on one full-length scrub bar: drag to scrub (seeks coalesce, so the picture
+  follows), ←/→ frame steps that scrub while held, Set start/end from the frame on screen
+  (the end includes that frame)
 - size budget, height and dither settings; calculated or fixed frame rate with even-timing option
 - track selection for video, audio (for listening) and subtitles; every ffmpeg command
   targets the selected video stream explicitly

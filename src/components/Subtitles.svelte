@@ -36,11 +36,11 @@
             <input type="color" bind:value={app.settings.subtitleStyle.outlineColor} aria-label="Subtitle outline colour" />
             <span class="row mini">
               Size <input type="range" min="2" max="20" step="0.5" bind:value={app.settings.subtitleStyle.size} aria-label="Subtitle size slider" />
-              <NumberField label="Subtitle size" bind:value={app.settings.subtitleStyle.size} min={0.5} max={100} suffix="%" size={4} />
+              <NumberField label="Subtitle size" bind:value={app.settings.subtitleStyle.size} min={0.5} max={100} suffix="%" />
             </span>
             <span class="row mini">
               Outline <input type="range" min="0" max="2" step="0.1" bind:value={app.settings.subtitleStyle.outline} aria-label="Subtitle outline slider" />
-              <NumberField label="Subtitle outline" bind:value={app.settings.subtitleStyle.outline} min={0} max={20} suffix="%" size={4} />
+              <NumberField label="Subtitle outline" bind:value={app.settings.subtitleStyle.outline} min={0} max={20} suffix="%" />
             </span>
           </div>
           <p class="muted note">

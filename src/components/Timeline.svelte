@@ -1,12 +1,8 @@
 <script lang="ts">
   import { formatTime, parseTime } from '../lib/time';
-  import { app, controls, playback } from '../state.svelte';
+  import { app, controls, frameDuration, playback, setEndHere, setStartHere } from '../state.svelte';
 
   const duration = $derived(app.info?.duration ?? 0);
-  const frame = $derived(1 / (app.info?.fps || 25));
-  // Zoomed view around the selection, for frame-level trimming.
-  const pad = $derived(Math.max(1.5, (app.end - app.start) * 0.35));
-  const zoom = $derived({ from: Math.max(0, app.start - pad), to: Math.min(duration, app.end + pad) });
 
   let startText = $state('');
   let endText = $state('');
@@ -15,62 +11,55 @@
     endText = formatTime(app.end);
   });
 
-  function setStart(t: number) {
-    app.start = Math.max(0, Math.min(t, app.end - frame));
-  }
-  function setEnd(t: number) {
-    app.end = Math.min(duration, Math.max(t, app.start + frame));
-  }
+  let track: HTMLDivElement | undefined = $state();
+  let hover: { x: number; t: number } | null = $state(null);
+  let dragging = false;
 
-  type Grab = 'start' | 'end' | 'seek';
-  let grab: { what: Grab; el: HTMLElement; from: number; to: number } | null = null;
-
-  function timeAt(e: PointerEvent, from: number, to: number, el: HTMLElement): number {
-    const r = el.getBoundingClientRect();
-    return from + Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * (to - from);
+  function timeAt(clientX: number): number {
+    if (!track) return 0;
+    const r = track.getBoundingClientRect();
+    return Math.min(1, Math.max(0, (clientX - r.left) / r.width)) * duration;
   }
 
-  function down(e: PointerEvent, what: Grab, from: number, to: number) {
-    const el = (e.currentTarget as HTMLElement).closest('.track') as HTMLElement;
-    grab = { what, el, from, to };
-    el.setPointerCapture(e.pointerId);
-    e.stopPropagation();
-    move(e);
+  function pct(t: number): string {
+    return `${(t / (duration || 1)) * 100}%`;
+  }
+
+  function down(e: PointerEvent) {
+    dragging = true;
+    track?.setPointerCapture(e.pointerId);
+    if (playback.playing) controls.toggle();
+    controls.seek(timeAt(e.clientX));
   }
 
   function move(e: PointerEvent) {
-    if (!grab) return;
-    const t = timeAt(e, grab.from, grab.to, grab.el);
-    if (grab.what === 'start') setStart(t);
-    else if (grab.what === 'end') setEnd(t);
-    if (grab.what === 'seek' || !playback.playing) controls.seek(t);
-  }
-
-  function pct(t: number, from: number, to: number): string {
-    return `${((t - from) / (to - from || 1)) * 100}%`;
+    const r = track!.getBoundingClientRect();
+    hover = { x: e.clientX - r.left, t: timeAt(e.clientX) };
+    if (dragging) controls.seek(hover.t);
   }
 
   function key(e: KeyboardEvent) {
     const target = e.target as HTMLElement;
     if (target.closest('input, textarea, select, [contenteditable]')) return;
-    const step = e.shiftKey ? 1 : frame;
     switch (e.key) {
       case ' ':
         controls.toggle();
         break;
       case 'ArrowLeft':
-        controls.seek(app.current - step);
+        if (e.shiftKey) controls.seek(app.current - 1);
+        else controls.step(-1);
         break;
       case 'ArrowRight':
-        controls.seek(app.current + step);
+        if (e.shiftKey) controls.seek(app.current + 1);
+        else controls.step(1);
         break;
       case 'i':
       case '[':
-        setStart(app.current);
+        setStartHere();
         break;
       case 'o':
       case ']':
-        setEnd(app.current);
+        setEndHere();
         break;
       case 'l':
         playback.loop = !playback.loop;
@@ -83,146 +72,159 @@
     }
     e.preventDefault();
   }
+
+  function editTime(which: 'start' | 'end', text: string) {
+    const t = parseTime(text);
+    if (t !== null) {
+      const f = frameDuration();
+      if (which === 'start') {
+        app.start = Math.max(0, Math.min(t, duration - f));
+        if (app.end <= app.start) app.end = Math.min(duration, app.start + f);
+      } else {
+        app.end = Math.min(duration, Math.max(t, f));
+        if (app.start >= app.end) app.start = Math.max(0, app.end - f);
+      }
+    }
+    startText = formatTime(app.start);
+    endText = formatTime(app.end);
+  }
 </script>
 
 <svelte:window onkeydown={key} />
 
 <div class="card timeline">
-  {#each [{ from: 0, to: duration, label: 'Whole video' }, { from: zoom.from, to: zoom.to, label: 'Selection (zoomed)' }] as bar}
-    <div class="bar-label muted">
-      <span>{bar.label}</span>
-      <span class="mono">{formatTime(bar.from, 1)} – {formatTime(bar.to, 1)}</span>
-    </div>
-    <div
-      class="track"
-      role="slider"
-      tabindex="-1"
-      aria-label="{bar.label} timeline"
-      aria-valuenow={app.current}
-      onpointerdown={(e) => down(e, 'seek', bar.from, bar.to)}
-      onpointermove={move}
-      onpointerup={() => (grab = null)}
-    >
-      <div class="range" style:left={pct(app.start, bar.from, bar.to)} style:width={pct(app.end - app.start + bar.from, bar.from, bar.to)}></div>
-      <div
-        class="handle"
-        style:left={pct(app.start, bar.from, bar.to)}
-        role="slider"
-        tabindex="-1"
-        aria-label="Clip start"
-        aria-valuenow={app.start}
-        onpointerdown={(e) => down(e, 'start', bar.from, bar.to)}
-      ></div>
-      <div
-        class="handle end"
-        style:left={pct(app.end, bar.from, bar.to)}
-        role="slider"
-        tabindex="-1"
-        aria-label="Clip end"
-        aria-valuenow={app.end}
-        onpointerdown={(e) => down(e, 'end', bar.from, bar.to)}
-      ></div>
-      <div class="playhead" style:left={pct(app.current, bar.from, bar.to)}></div>
-    </div>
-  {/each}
+  <div
+    class="track"
+    bind:this={track}
+    role="slider"
+    tabindex="0"
+    aria-label="Position in video"
+    aria-valuemin={0}
+    aria-valuemax={duration}
+    aria-valuenow={app.current}
+    aria-valuetext={formatTime(app.current)}
+    onpointerdown={down}
+    onpointermove={move}
+    onpointerup={() => (dragging = false)}
+    onpointerleave={() => (hover = null)}
+  >
+    <div class="range" style:left={pct(app.start)} style:width={pct(app.end - app.start)}></div>
+    <div class="marker start" style:left={pct(app.start)} title="Clip start"></div>
+    <div class="marker end" style:left={pct(app.end)} title="Clip end"></div>
+    <div class="playhead" style:left={pct(app.current)}></div>
+    {#if hover}<div class="hover mono" style:left="{hover.x}px">{formatTime(hover.t, 1)}</div>{/if}
+  </div>
 
   <div class="row controls">
-    <label class="field">
+    <button class="small" onclick={() => controls.step(-1)} title="Previous frame (←; hold to scrub)">‹ Frame</button>
+    <button class="small" onclick={() => controls.step(1)} title="Next frame (→; hold to scrub)">Frame ›</button>
+    <button onclick={() => setStartHere()} title="Start the clip at this frame (I)">Set start</button>
+    <button onclick={() => setEndHere()} title="End the clip after this frame (O)">Set end</button>
+    <span class="length mono">Clip {formatTime(app.end - app.start)}</span>
+  </div>
+
+  <div class="row controls">
+    <label class="row mini">
       Start
-      <input
-        class="mono"
-        size="11"
-        bind:value={startText}
-        onchange={() => {
-          const t = parseTime(startText);
-          if (t !== null) setStart(t);
-          startText = formatTime(app.start);
-        }}
-      />
+      <input class="mono" size="11" aria-label="Clip start time" bind:value={startText} onchange={() => editTime('start', startText)} />
     </label>
-    <button class="small" onclick={() => setStart(app.current)} title="Set start to playhead (I or [)">Set start</button>
-    <label class="field">
-      End
-      <input
-        class="mono"
-        size="11"
-        bind:value={endText}
-        onchange={() => {
-          const t = parseTime(endText);
-          if (t !== null) setEnd(t);
-          endText = formatTime(app.end);
-        }}
-      />
-    </label>
-    <button class="small" onclick={() => setEnd(app.current)} title="Set end to playhead (O or ])">Set end</button>
-    <span class="length mono">Length {formatTime(app.end - app.start)}</span>
-  </div>
-  <div class="row nav">
     <button class="small" onclick={() => controls.seek(app.start)}>Go to start</button>
-    <button class="small" onclick={() => controls.seek(app.current - frame)} title="Previous frame (←)">‹ Frame</button>
-    <button class="small" onclick={() => controls.seek(app.current + frame)} title="Next frame (→)">Frame ›</button>
-    <button class="small" onclick={() => controls.seek(app.end)}>Go to end</button>
-    <span class="muted keys"><kbd>Space</kbd> play <kbd>←</kbd><kbd>→</kbd> frame (<kbd>Shift</kbd> 1 s) <kbd>I</kbd>/<kbd>O</kbd> set start/end <kbd>M</kbd> mute</span>
+    <label class="row mini">
+      End
+      <input class="mono" size="11" aria-label="Clip end time" bind:value={endText} onchange={() => editTime('end', endText)} />
+    </label>
+    <button class="small" onclick={() => controls.seek(Math.max(0, app.end - frameDuration()))}>Go to end</button>
   </div>
+
+  <p class="keys muted">
+    Drag the bar to scrub. <kbd>←</kbd><kbd>→</kbd> one frame (hold to scrub), <kbd>Shift</kbd> 1 s ·
+    <kbd>I</kbd> set start · <kbd>O</kbd> set end · <kbd>Space</kbd> play · <kbd>M</kbd> mute
+  </p>
 </div>
 
 <style>
   .timeline {
     display: grid;
-    gap: 0.35rem;
-  }
-  .bar-label {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.8rem;
+    gap: 0.55rem;
   }
   .track {
     position: relative;
-    height: 30px;
+    height: 36px;
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: 5px;
     cursor: pointer;
     touch-action: none;
-    margin-bottom: 0.4rem;
+  }
+  .track:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
   .range {
     position: absolute;
     top: 0;
     bottom: 0;
     background: var(--accent-soft);
-    border-left: 2px solid var(--accent);
-    border-right: 2px solid var(--accent);
+    pointer-events: none;
   }
-  .handle {
-    position: absolute;
-    top: -3px;
-    bottom: -3px;
-    width: 12px;
-    margin-left: -6px;
-    background: var(--accent);
-    border-radius: 3px;
-    cursor: ew-resize;
-  }
-  .playhead {
+  .marker {
     position: absolute;
     top: -4px;
     bottom: -4px;
+    width: 3px;
+    margin-left: -1.5px;
+    background: var(--accent);
+    pointer-events: none;
+  }
+  .marker::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    width: 7px;
+    height: 7px;
+    background: var(--accent);
+  }
+  .marker.start::after {
+    left: 0;
+  }
+  .marker.end::after {
+    right: 0;
+  }
+  .playhead {
+    position: absolute;
+    top: -6px;
+    bottom: -6px;
     width: 2px;
     margin-left: -1px;
     background: var(--text);
     pointer-events: none;
   }
+  .hover {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    transform: translateX(-50%);
+    font-size: 0.75rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    background: var(--text);
+    color: var(--bg);
+    pointer-events: none;
+    white-space: nowrap;
+  }
   .controls {
-    align-items: end;
-    margin-top: 0.3rem;
+    align-items: center;
+  }
+  .mini {
+    gap: 0.35rem;
+    font-size: 0.88rem;
+    color: var(--muted);
   }
   .length {
     margin-left: auto;
     font-weight: 600;
   }
   .keys {
-    margin-left: auto;
     font-size: 0.8rem;
+    margin: 0;
   }
 </style>

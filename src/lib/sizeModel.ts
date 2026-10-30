@@ -70,6 +70,8 @@ export function calibratedHeights(): [number, number] {
 export const FILE_OVERHEAD = 1024; // header, global palette, loop extension, trailer
 export const FRAME_OVERHEAD = 24; // graphic control ext, image descriptor, LZW framing
 export const MAX_GIF_FPS = 50; // browsers show delays under 2 cs as 10 cs
+/** Ceiling for "max for size": GIFs rarely benefit from more, and every frame costs. */
+export const AUTO_MAX_FPS = 30;
 
 export function featureKey(f: Feature): string {
   return `${f.kind}${f.threshold}`;
@@ -133,7 +135,7 @@ export interface FpsPlan {
   frames: number;
   expectedBytes: number;
   safeBytes: number;
-  limitedBy: 'budget' | 'source' | 'gif' | 'manual';
+  limitedBy: 'budget' | 'source' | 'cap' | 'gif' | 'manual';
 }
 
 export function planFps(p: {
@@ -144,15 +146,18 @@ export function planFps(p: {
   k: KEstimate;
   sourceFps: number;
   uniform: boolean;
+  /** Upper limit for the calculated rate (AUTO_MAX_FPS in the app). */
+  maxFps?: number;
 }): FpsPlan {
   const perFrame = p.width * p.height * p.k.safe + FRAME_OVERHEAD;
   const maxFrames = Math.max(1, Math.floor((p.budget - FILE_OVERHEAD) / perFrame));
   // frameCount(d, f) = ceil(d·f) ≤ maxFrames  ⇔  f ≤ maxFrames / d
   const budgetFps = maxFrames / p.duration;
   const sourceFps = p.sourceFps > 0 ? p.sourceFps : MAX_GIF_FPS;
-  let limitedBy: 'budget' | 'source' | 'gif' = 'budget';
+  let limitedBy: 'budget' | 'source' | 'cap' | 'gif' = 'budget';
   let fps = budgetFps;
   if (sourceFps < fps) [fps, limitedBy] = [sourceFps, 'source'];
+  if (p.maxFps !== undefined && p.maxFps < fps) [fps, limitedBy] = [p.maxFps, 'cap'];
   if (MAX_GIF_FPS < fps) [fps, limitedBy] = [MAX_GIF_FPS, 'gif'];
   const snapped = snapFps(fps, p.uniform);
   const frames = frameCount(p.duration, snapped.fps);

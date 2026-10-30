@@ -6,7 +6,7 @@
   import { activeAt, cueText, ORIGINAL_PREVIEW_STYLE, overlapping, type SubtitleStyle } from '../lib/subtitles';
   import { formatTime } from '../lib/time';
   import { app, audioSource, controls, nativeVideo, playback, renderPreview, requestStill } from '../state.svelte';
-  import NumberField from './NumberField.svelte';
+  import PresetSelect from './PresetSelect.svelte';
 
   let video: HTMLVideoElement | undefined = $state();
   let audio: HTMLAudioElement | undefined = $state();
@@ -62,15 +62,61 @@
     untrack(stop);
   });
 
+  /*
+   * Scrubbing: while a seek is in flight, newer requests replace each other and the
+   * latest is issued when the frame arrives ('seeked'). The picture keeps up with a drag
+   * or a held arrow key instead of freezing until the queue drains.
+   */
+  let pendingSeek: number | null = null;
+  /** Frame index being stepped to; runs ahead of the picture while an arrow key is held. */
+  let stepIndex: number | null = null;
+
+  function seekVideo(t: number) {
+    if (!video) return;
+    if (video.seeking) pendingSeek = t;
+    else video.currentTime = t;
+  }
+
+  function seeked() {
+    if (pendingSeek !== null && video) {
+      video.currentTime = pendingSeek;
+      pendingSeek = null;
+    }
+  }
+
+  /** True while the picture lags a requested position (frame callbacks are then stale). */
+  function catchingUp(): boolean {
+    return !!video && (video.seeking || pendingSeek !== null);
+  }
+
   onMount(() => {
     controls.seek = (t) => {
       const time = Math.max(0, Math.min(duration, t));
-      app.current = time;
-      if (showVideo && video) video.currentTime = time;
-      else {
-        if (playback.playing && source.mode === 'ffmpeg') followSound(time);
-        else requestStill(time);
+      stepIndex = null;
+      if (showVideo && video && !playback.playing) {
+        // Land on a whole frame, aiming mid-frame: a seek exactly onto a frame boundary
+        // can show the previous frame, and the playhead must name the frame on screen.
+        const fps = app.info?.fps || 25;
+        const index = Math.min(Math.max(0, Math.ceil(duration * fps) - 1), Math.floor(time * fps + 1e-3));
+        app.current = index / fps;
+        seekVideo((index + 0.5) / fps);
+        return;
       }
+      app.current = time;
+      if (showVideo && video) seekVideo(time);
+      else if (playback.playing && source.mode === 'ffmpeg') followSound(time);
+      else requestStill(time);
+    };
+    controls.step = (n) => {
+      const fps = app.info?.fps || 25;
+      if (playback.playing) stop();
+      const last = Math.max(0, Math.ceil(duration * fps) - 1);
+      const from = stepIndex ?? Math.floor(app.current * fps + 1e-3);
+      stepIndex = Math.min(last, Math.max(0, from + n));
+      app.current = stepIndex / fps;
+      // Aim mid-frame so the frame shown is unambiguous; app.current keeps the frame's start.
+      if (showVideo && video) seekVideo((stepIndex + 0.5) / fps);
+      else requestStill(app.current);
     };
     controls.toggle = () => (playback.playing ? stop() : start());
     if (!showVideo) requestStill(app.current);
@@ -82,6 +128,7 @@
     const from = loopFrom ? app.start : app.current;
     const ffSound = source.mode === 'ffmpeg' && app.audioTrack !== null;
     if (!showVideo && !ffSound) return;
+    stepIndex = null;
     if (ffSound) {
       soundState = 'loading';
       try {
@@ -152,7 +199,7 @@
     if (!v || !hasFrameCallback) return;
     let handle = 0;
     const tick = (_: number, meta: VideoFrameCallbackMetadata) => {
-      onTime(meta.mediaTime);
+      if (!catchingUp()) onTime(meta.mediaTime);
       handle = v.requestVideoFrameCallback(tick);
     };
     handle = v.requestVideoFrameCallback(tick);
@@ -243,7 +290,8 @@
           playback.playing = false;
           sound.pause();
         }}
-        ontimeupdate={() => video && !hasFrameCallback && onTime(video.currentTime)}
+        onseeked={seeked}
+        ontimeupdate={() => video && !hasFrameCallback && !catchingUp() && onTime(video.currentTime)}
         onclick={() => controls.toggle()}
       ></video>
     {:else if app.stillUrl}
@@ -301,13 +349,12 @@
   <div class="row bar sound">
     <span class="row opt">
       Speed
-      <NumberField
+      <PresetSelect
         label="Playback speed"
         bind:value={playback.rate}
         min={0.25}
         max={4}
         suffix="×"
-        size={4}
         presets={[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2].map((v) => ({ value: v, label: `${v}×` }))}
       />
     </span>
