@@ -5,3 +5,4 @@ tools/calibrate/.cache/
 test-results/
 *.local
 .DS_Store
+tools/decoders/.cache/

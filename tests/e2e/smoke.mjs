@@ -2,15 +2,18 @@
 // End-to-end smoke test: serves the production build, drives a real Chromium through
 // open → trim → (subtitles) → caption → exact preview → encode, and checks the GIF.
 //
-//   npm run build && npm run e2e -- [--video file]... [--chromium path] [--out dir]
+//   npm run build && npm run e2e -- [--video file]... [--browser chromium|firefox] [--chromium path] [--out dir]
 //
 // With no --video, a synthetic H.264 clip with an SRT track is generated (needs ffmpeg).
+// Firefox runs Playwright's own Firefox build, e.g. inside its Docker image:
+//   docker run --rm --network host -v "$PWD:/repo" -w /repo mcr.microsoft.com/playwright:v1.64.0-noble \
+//     node tests/e2e/smoke.mjs --browser firefox --video /repo/some.mkv
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright-core';
+import { chromium, firefox } from 'playwright-core';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const argv = process.argv.slice(2);
@@ -58,7 +61,8 @@ async function serve() {
 async function runVideo(browser, url, video, index) {
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
   const errors = [];
-  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  // Firefox reports fonts its sanitizer rejects for the HTML preview; libass still uses them.
+  page.on('console', (m) => m.type() === 'error' && !/downloadable font/.test(m.text()) && errors.push(m.text()));
   page.on('pageerror', (e) => errors.push(String(e)));
   const tag = `${index}-${video.split('/').pop().replace(/[^\w.-]+/g, '_')}`;
   const result = { video, errors };
@@ -130,7 +134,9 @@ async function runVideo(browser, url, video, index) {
 
 const videos = opt('--video').length ? opt('--video').map((v) => resolve(v)) : [syntheticVideo()];
 const { url, proc } = await serve();
-const browser = await chromium.launch({ executablePath: findChromium() });
+const browser = (opt('--browser')[0] ?? 'chromium') === 'firefox'
+  ? await firefox.launch()
+  : await chromium.launch({ executablePath: findChromium() });
 let failed = false;
 try {
   for (const [i, v] of videos.entries()) {

@@ -1,8 +1,15 @@
 # Web GIF Creator
 
 Turn video clips into high-quality GIFs in the browser, sized to fit a file-size budget.
-Everything runs locally with [ffmpeg.wasm](https://github.com/ffmpegwasm/ffmpeg.wasm); the
-video is never uploaded. Deploys as a static site to GitHub Pages.
+Everything runs locally; the video is never uploaded. Deploys as a static site to GitHub
+Pages.
+
+- **Preview:** [Mediabunny](https://mediabunny.dev) reads the file. It plays with the
+  browser's own decoders where they can, and with FFmpeg's decoders compiled to
+  WebAssembly where they can't (e.g. 10-bit H.264 or AC-3 in Firefox). This works the
+  same in any browser; see [tools/decoders](tools/decoders/README.md).
+- **GIF encoding:** [ffmpeg.wasm](https://github.com/ffmpegwasm/ffmpeg.wasm), running the
+  same palettegen/paletteuse pipeline as the command line.
 
 - Trim on one full-length scrub bar: drag to scrub, ←/→ step a frame (hold to scrub),
   then set the frame on screen as the clip's start or end. With sound (volume, mute,
@@ -41,10 +48,17 @@ npm run build      # static site in dist/
 npm run e2e        # end-to-end in Chromium against dist/ (see below)
 ```
 
-`npm run e2e -- --video some.mkv` drives a real Chromium through open → trim → subtitles →
+`npm run e2e -- --video some.mkv` drives a real browser through open → trim → subtitles →
 caption → preview → encode and checks the GIF against the budget. With no `--video` it
 generates a synthetic clip (needs `ffmpeg` on PATH). It uses Playwright's Chromium from
 `~/.cache/ms-playwright`, or `--chromium <path>` / `CHROMIUM_PATH`.
+
+For Firefox, use `--browser firefox` inside Playwright's Docker image, which bundles it:
+
+```sh
+docker run --rm --network host -v "$PWD:/repo" -w /repo mcr.microsoft.com/playwright:v1.64.0-noble \
+  node tests/e2e/smoke.mjs --browser firefox --video /repo/some.mkv
+```
 
 ## Deployment
 
@@ -54,7 +68,7 @@ build uses relative paths, so it works under `https://<user>.github.io/<repo>/`.
 
 ## Limits
 
-- **AV1 video can't be decoded** by the ffmpeg.wasm build (FFmpeg 5.1.4 without dav1d).
+- **AV1 video can't be made into a GIF**: the ffmpeg.wasm build has no AV1 decoder.
 - Single-threaded ffmpeg: fine for short clips, slow for long or 4K HEVC sources.
 - Image-based subtitles (PGS, VobSub) aren't supported yet.
 - Size estimates vary with content; see the calibration README. If a GIF comes out over

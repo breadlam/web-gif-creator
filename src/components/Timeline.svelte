@@ -13,7 +13,9 @@
 
   let track: HTMLDivElement | undefined = $state();
   let hover: { x: number; t: number } | null = $state(null);
+  /** While dragging, show keyframes (fast); on release, the exact frame. */
   let dragging = false;
+  let dragTime = 0;
 
   function timeAt(clientX: number): number {
     if (!track) return 0;
@@ -29,13 +31,23 @@
     dragging = true;
     track?.setPointerCapture(e.pointerId);
     if (playback.playing) controls.toggle();
-    controls.seek(timeAt(e.clientX));
+    dragTime = timeAt(e.clientX);
+    controls.scrub(dragTime);
   }
 
   function move(e: PointerEvent) {
     const r = track!.getBoundingClientRect();
     hover = { x: e.clientX - r.left, t: timeAt(e.clientX) };
-    if (dragging) controls.seek(hover.t);
+    if (dragging) {
+      dragTime = hover.t;
+      controls.scrub(dragTime);
+    }
+  }
+
+  function up() {
+    if (!dragging) return;
+    dragging = false;
+    controls.seek(dragTime);
   }
 
   function key(e: KeyboardEvent) {
@@ -96,7 +108,7 @@
     aria-valuetext={formatTime(app.current)}
     onpointerdown={down}
     onpointermove={move}
-    onpointerup={() => (dragging = false)}
+    onpointerup={up}
     onpointerleave={() => (hover = null)}
   >
     <div class="range" style:left={pct(app.start)} style:width={pct(app.end - app.start)}></div>

@@ -185,17 +185,23 @@
     font-size: 0.85rem;
     flex: 1;
   }
+  /* Floats over the page instead of pushing it down, so nothing jumps when work starts
+     or finishes (e.g. mid-drag on the timeline). */
   .busy {
-    position: sticky;
-    top: 0;
-    z-index: 10;
+    position: fixed;
+    top: 0.6rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
     display: flex;
     gap: 0.8rem;
     align-items: center;
-    padding: 0.5rem 1.2rem;
-    background: var(--accent-soft);
-    border-bottom: 1px solid var(--border);
-    backdrop-filter: blur(6px);
+    width: min(640px, calc(100% - 2rem));
+    padding: 0.5rem 1rem;
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
   }
   .busy progress {
     flex: 1;

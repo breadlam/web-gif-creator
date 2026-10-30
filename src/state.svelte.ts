@@ -2,12 +2,12 @@ import type { Cue, TextOverlay } from './lib/ass';
 import { parseAssCues } from './lib/ass';
 import { Cancelled, engine } from './lib/engine';
 import { fontInfo } from './lib/fontNames';
+import { extractMkvSubtitles } from './lib/mkvSubtitles';
 import { allFonts, registerFont, unregisterFonts, type FontChoice, type FontId } from './lib/fonts';
 import {
-  addFontFile, encodeGif, extractSubtitles, loadFonts, openFile, planClip, previewFrame, stillFrame,
+  addFontFile, encodeGif, extractSubtitles, loadFonts, openFile, planClip, previewFrame,
   writeTextLayers, type Job, type Plan,
 } from './lib/pipeline';
-import { browserDecodes } from './lib/audioPreview';
 import { defaultAudioTrack, outputWidth, videoFields, type MediaInfo } from './lib/probe';
 import { frameCount, snapFps, type DitherMode } from './lib/sizeModel';
 import { bestTrack, DEFAULT_SUBTITLE_STYLE, type SubtitleMode, type SubtitleStyle } from './lib/subtitles';
@@ -61,14 +61,9 @@ export const app = $state({
   file: null as File | null,
   input: '',
   info: null as MediaInfo | null,
-  videoUrl: '',
-  playable: true,
-  stillUrl: '',
   current: 0,
   /** Audio stream to hear while trimming. */
   audioTrack: null as number | null,
-  /** Set when the browser played the video without sound. */
-  nativeAudioFailed: false,
   start: 0,
   end: 0,
   settings: loadSettings(),
@@ -100,8 +95,10 @@ export const playback = $state({ playing: false, loop: true, volume: 1, muted: f
 
 /** Registered by Player so other components can drive the video. */
 export const controls = {
-  /** Jump (or scrub) to a time. */
+  /** Jump to a time, showing the exact frame. */
   seek: (_t: number) => {},
+  /** Follow a drag: show the nearest keyframe (fast), playhead at t. */
+  scrub: (_t: number) => {},
   toggle: () => {},
   /** Step by whole source frames; repeated calls (a held arrow key) scrub. */
   step: (_frames: number) => {},
@@ -151,40 +148,11 @@ engine.onLog((line) => {
   if (app.log.length > 400) app.log.splice(0, app.log.length - 400);
 });
 
-/**
- * Whether the <video> element can show the selected video track. Browsers play a file's
- * first video track only; otherwise the preview uses ffmpeg-rendered stills.
- */
-export function nativeVideo(): boolean {
-  return app.playable && !!app.info && app.info.videoIndex === app.info.videos[0]?.index;
-}
-
 export function selectVideoTrack(index: number): void {
   const track = app.info?.videos.find((v) => v.index === index);
   if (!app.info || !track) return;
   Object.assign(app.info, videoFields(track));
   app.plan = null;
-  if (!nativeVideo()) requestStill(app.current);
-}
-
-export type AudioSource = { mode: 'none' } | { mode: 'native' } | { mode: 'ffmpeg'; reason: string };
-
-/**
- * Where preview sound comes from: the <video> element when the browser can play the
- * selected track, otherwise ffmpeg-decoded audio (see lib/audioPreview.ts).
- */
-export function audioSource(): AudioSource {
-  const tracks = app.info?.audio ?? [];
-  const track = tracks.find((t) => t.index === app.audioTrack);
-  if (!track) return { mode: 'none' };
-  if (!nativeVideo()) {
-    return { mode: 'ffmpeg', reason: app.playable ? 'the video track shown is decoded by ffmpeg' : "this browser can't play the file" };
-  }
-  // Browsers play the first audio track and offer no way to switch.
-  if (track.index !== tracks[0].index) return { mode: 'ffmpeg', reason: 'browsers only play the first audio track' };
-  if (!browserDecodes(track.codec)) return { mode: 'ffmpeg', reason: `this browser can't decode ${track.codec.toUpperCase()} audio` };
-  if (app.nativeAudioFailed) return { mode: 'ffmpeg', reason: 'the browser played this file without sound' };
-  return { mode: 'native' };
 }
 
 /** Everything the frame-rate calculation depends on; a plan is stale when this changes. */
@@ -225,10 +193,9 @@ export function cancel(): void {
 
 export async function openVideo(file: File): Promise<void> {
   if (app.busy) cancel();
-  if (app.videoUrl) URL.revokeObjectURL(app.videoUrl);
   Object.assign(app, {
-    file, info: null, input: '', videoUrl: URL.createObjectURL(file), playable: true, stillUrl: '',
-    audioTrack: null, nativeAudioFailed: false,
+    file, info: null, input: '',
+    audioTrack: null,
     subtitleTracks: {}, subtitleStatus: 'none', track: null, cues: [], subMode: 'off', disabledCues: [],
     cueOverrides: {}, plan: null, planKey: '', output: null,
     preview: null, overlays: [], selected: null,
@@ -259,7 +226,19 @@ export async function loadSubtitles(): Promise<void> {
   if (!app.info) return;
   const info = $state.snapshot(app.info) as MediaInfo;
   app.subtitleStatus = 'loading';
-  const tracks = await run('Reading subtitles', (progress) => extractSubtitles(app.input, info, progress));
+  const file = app.file!;
+  const tracks = await run('Reading subtitles', async (progress) => {
+    // Matroska/WebM: read in JavaScript (fast); anything else, or a parse failure: ffmpeg.
+    if (/matroska|webm/.test(info.container)) {
+      const scripts = await extractMkvSubtitles(file, (f) => progress(f, 'Reading subtitles')).catch(() => null);
+      if (scripts && scripts.length === info.subtitles.length) {
+        return Object.fromEntries(
+          info.subtitles.flatMap((t, i) => (t.text && scripts[i] ? [[t.index, scripts[i]] as const] : [])),
+        );
+      }
+    }
+    return extractSubtitles(app.input, info, progress);
+  });
   if (!tracks || app.info?.duration !== info.duration) {
     app.subtitleStatus = 'failed';
     return;
@@ -373,29 +352,6 @@ export async function renderPreview(): Promise<void> {
   if (!blob) return;
   if (app.preview) URL.revokeObjectURL(app.preview.url);
   app.preview = { url: URL.createObjectURL(blob), time };
-}
-
-let stillBusy = false;
-let stillWanted: number | null = null;
-
-/** Show ffmpeg-rendered stills when the browser can't play the file. */
-export async function requestStill(time: number): Promise<void> {
-  stillWanted = time;
-  if (stillBusy || app.busy) return;
-  stillBusy = true;
-  try {
-    while (stillWanted !== null) {
-      const t = stillWanted;
-      stillWanted = null;
-      if (!app.info) break;
-      const blob = await stillFrame(app.input, app.info.videoIndex, t).catch(() => null);
-      if (!blob) continue;
-      if (app.stillUrl) URL.revokeObjectURL(app.stillUrl);
-      app.stillUrl = URL.createObjectURL(blob);
-    }
-  } finally {
-    stillBusy = false;
-  }
 }
 
 let fontCounter = 0;

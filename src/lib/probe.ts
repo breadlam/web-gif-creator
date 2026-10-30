@@ -53,6 +53,8 @@ export interface VideoFields {
 
 export interface MediaInfo extends VideoFields {
   duration: number;
+  /** ffprobe's format name, e.g. "matroska,webm" or "mov,mp4,m4a,3gp,3g2,mj2". */
+  container: string;
   videos: VideoTrack[];
   subtitles: SubtitleTrack[];
   audio: AudioTrack[];
@@ -94,7 +96,7 @@ interface ProbeStream {
 
 export interface ProbeJson {
   streams?: ProbeStream[];
-  format?: { duration?: string };
+  format?: { duration?: string; format_name?: string };
 }
 
 export function parseProbe(json: ProbeJson): MediaInfo {
@@ -150,7 +152,7 @@ export function parseProbe(json: ProbeJson): MediaInfo {
     .filter((s) => /font|truetype|opentype/i.test(tag(s, 'mimetype')) || /\.(ttf|otf|ttc)$/i.test(tag(s, 'filename')))
     .map((s) => ({ index: s.index, filename: tag(s, 'filename') }));
 
-  return { duration, videos, subtitles, audio, fonts, ...videoFields(video) };
+  return { duration, container: json.format?.format_name ?? '', videos, subtitles, audio, fonts, ...videoFields(video) };
 }
 
 export function videoFields(v: VideoTrack): VideoFields {

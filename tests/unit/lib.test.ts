@@ -6,6 +6,8 @@ import { featureValue, parseFrameMetadata, parseFrameProgress, parseTimeProgress
 import { defaultAudioTrack, outputWidth, parseProbe, type ProbeJson } from '../../src/lib/probe';
 import { coefsAt, estimateK, frameCount, gifBytes, MODEL, modelFor, modelKey, paletteuseDither, planFps, snapFps } from '../../src/lib/sizeModel';
 import { compactTime, formatTime, parseTime } from '../../src/lib/time';
+import { extractMkvSubtitles } from '../../src/lib/mkvSubtitles';
+import { wavFromBuffers } from '../../src/lib/preview/audioWindows';
 import { activeAt, applyOverrides, bestTrack, buildSubtitleAss, DEFAULT_SUBTITLE_STYLE, nearby, overlapping, searchCues } from '../../src/lib/subtitles';
 
 describe('time', () => {
@@ -349,5 +351,55 @@ describe('font info', () => {
     expect(anton).toMatchObject({ family: 'Anton', bold: false });
     expect(anton!.cssPerAss).toBeCloseTo(0.5769, 3);
     expect(fontInfo(new Uint8Array(16))).toBeNull();
+  });
+});
+
+describe('Matroska subtitle extraction', () => {
+  it('matches what ffmpeg extracts, for ASS and SRT tracks', async () => {
+    const { readFileSync } = await import('node:fs');
+    const tracks = await extractMkvSubtitles(new Blob([readFileSync('tests/fixtures/subs.mkv')]));
+    expect(tracks).toHaveLength(2);
+    const dialogue = (ass: string) => ass.split('\n').filter((l) => l.startsWith('Dialogue:'));
+    // Reference lines: `ffmpeg -i subs.mkv -map 0:1 -c:s copy` and `-map 0:2 -c:s ass` (FFmpeg 5.1.4).
+    expect(dialogue(tracks![0])).toEqual([
+      'Dialogue: 0,0:00:00.50,0:00:01.20,Default,,0,0,0,,First line, with a comma',
+      'Dialogue: 1,0:00:01.00,0:00:02.75,Sign,,0,0,0,,{\\pos(320,40)}A sign',
+      'Dialogue: 0,0:00:02.00,0:00:03.00,Default,Bob,0,0,0,,Second\\Nline',
+    ]);
+    expect(tracks![0]).toContain('Style: Sign,Arial,24');
+    expect(dialogue(tracks![1])).toEqual([
+      'Dialogue: 0,0:00:00.40,0:00:01.60,Default,,0,0,0,,{\\i1}Italic{\\i0} and plain',
+      'Dialogue: 0,0:00:02.00,0:00:02.90,Default,,0,0,0,,Two\\Nlines',
+    ]);
+    expect(parseAssCues(tracks![1]).map((c) => c.text)).toEqual(['Italic and plain', 'Two\nlines']);
+  });
+
+  it('returns null for files that are not Matroska', async () => {
+    expect(await extractMkvSubtitles(new Blob([new Uint8Array(64)]))).toBeNull();
+  });
+});
+
+describe('preview sound WAV', () => {
+  // Minimal stand-in for AudioBuffer (not available in Node).
+  const buffer = (channels: number[][], sampleRate = 48000) =>
+    ({ sampleRate, numberOfChannels: channels.length, length: channels[0].length, getChannelData: (i: number) => Float32Array.from(channels[i]) }) as unknown as AudioBuffer;
+  const samples = async (blob: Blob) => {
+    const view = new DataView(await blob.arrayBuffer());
+    return { channels: view.getUint16(22, true), rate: view.getUint32(24, true), data: Array.from({ length: (view.byteLength - 44) / 2 }, (_, i) => view.getInt16(44 + i * 2, true)) };
+  };
+
+  it('writes stereo as is, with a silent lead-in', async () => {
+    const wav = await samples(wavFromBuffers([buffer([[0.5, -0.5], [0.25, 0]])], 2 / 48000));
+    expect(wav.channels).toBe(2);
+    expect(wav.rate).toBe(48000);
+    expect(wav.data).toEqual([0, 0, 0, 0, 16383, 8191, -16383, 0]);
+  });
+
+  it('folds 5.1 down to stereo keeping the centre (dialogue) channel', async () => {
+    // FL FR FC LFE BL BR: only the centre has signal.
+    const wav = await samples(wavFromBuffers([buffer([[0], [0], [1], [0], [0], [0]])]));
+    expect(wav.channels).toBe(2);
+    expect(wav.data[0]).toBe(wav.data[1]);
+    expect(wav.data[0]).toBeGreaterThan(8000);
   });
 });

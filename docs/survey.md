@@ -18,6 +18,8 @@ trim → scale (540p default) → frame rate that fits a size budget (20 MB defa
 | **No Rust** | With ffmpeg doing the media work there is nothing for it to do. Revisit only if a real job appears. |
 | **Frame rate is calculated**, not found by trial encodes | Size is linear in frame count (§4). One cheap analysis pass measures the clip. |
 | **TypeScript + Svelte 5 + Vite** | Small, fast UI. Builds to static files with relative paths. |
+| **Preview without the `<video>` element** (2026-10-29): Mediabunny + WebCodecs, falling back to FFmpeg decoders in wasm | `<video>` only plays what each browser supports (Firefox: no FLAC in MKV, platform-dependent 10-bit H.264). The preview has to work the same everywhere. |
+| **No low-resolution proxy** | Rejected in favour of decoding the real frames. |
 
 ## 2. Architecture (as built)
 
@@ -73,6 +75,29 @@ nudge in the timestamp shift covers the remaining rounding.
 - **"My style"** regenerates the lines in the clip with one style. It uses bottom-centre
   alignment plus margins rather than `\pos()`, so lines that overlap in time stack the way
   normal subtitles do.
+
+### Preview stack
+
+```
+File ──► Mediabunny (JS demux: MP4/MOV/MKV/WebM/TS…) ──► per track:
+           WebCodecs, if VideoDecoder/AudioDecoder.isConfigSupported(config)
+           else FFmpeg decoders in a worker (public/decoders, tools/decoders)
+         video ──► canvas: exact frames (GOP decoded once and cached for stepping),
+                   keyframes while scrubbing, decode-ahead stream while playing
+         audio ──► decoded windows as WAV in an <audio> element (keeps pitch at any
+                   speed; the playback clock)
+         neither readable ──► ffmpeg stills + ffmpeg-decoded sound (AVI, FLV, MPEG-2, TrueHD…)
+Subtitles: Matroska/WebM read in JS (src/lib/mkvSubtitles.ts; 804 MB file in ~2 s,
+           vs 19 s through ffmpeg.wasm); other containers via ffmpeg.
+```
+
+Measured on a 720p 10-bit H.264 / FLAC Matroska episode:
+
+| | Firefox 157 | Chromium |
+|---|---|---|
+| `<video>` can play it | no (`canPlayType` empty) | yes |
+| New preview video | software: 2.9× real time | browser: 12.5× real time |
+| New preview sound | browser (FLAC) | browser |
 
 ## 3. Constraints and quirks found along the way
 
