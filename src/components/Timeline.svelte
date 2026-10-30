@@ -1,6 +1,6 @@
 <script lang="ts">
   import { formatTime, parseTime } from '../lib/time';
-  import { app, controls, frameDuration, playback, setEndHere, setStartHere } from '../state.svelte';
+  import { app, controls, frameDuration, playback, setEnd, setEndHere, setStart, setStartHere } from '../state.svelte';
 
   const duration = $derived(app.info?.duration ?? 0);
 
@@ -75,16 +75,7 @@
 
   function editTime(which: 'start' | 'end', text: string) {
     const t = parseTime(text);
-    if (t !== null) {
-      const f = frameDuration();
-      if (which === 'start') {
-        app.start = Math.max(0, Math.min(t, duration - f));
-        if (app.end <= app.start) app.end = Math.min(duration, app.start + f);
-      } else {
-        app.end = Math.min(duration, Math.max(t, f));
-        if (app.start >= app.end) app.start = Math.max(0, app.end - f);
-      }
-    }
+    if (t !== null) (which === 'start' ? setStart : setEnd)(t);
     startText = formatTime(app.start);
     endText = formatTime(app.end);
   }

@@ -117,20 +117,33 @@ function frameStart(t: number): number {
   return Math.floor(t * fps + 1e-3) / fps;
 }
 
-/** Start the clip at the frame on screen. If that's at or past the end, the end follows. */
-export function setStartHere(t = app.current): void {
+/**
+ * Set the clip start. If it lands at or past the end, the end is cleared back to the end
+ * of the video, so playing on from here runs until a new end is chosen.
+ */
+export function setStart(t: number): void {
   const f = frameDuration();
   const duration = app.info?.duration ?? 0;
-  app.start = Math.max(0, Math.min(frameStart(t), duration - f));
-  if (app.end <= app.start) app.end = Math.min(duration, app.start + f);
+  app.start = Math.max(0, Math.min(t, duration - f));
+  if (app.end <= app.start) app.end = duration;
+}
+
+/** Set the clip end. If it lands at or before the start, the start is cleared to 0. */
+export function setEnd(t: number): void {
+  const f = frameDuration();
+  const duration = app.info?.duration ?? 0;
+  app.end = Math.min(duration, Math.max(t, f));
+  if (app.start >= app.end) app.start = 0;
+}
+
+/** Start the clip at the frame on screen. */
+export function setStartHere(t = app.current): void {
+  setStart(frameStart(t));
 }
 
 /** End the clip after the frame on screen, so that frame is included. */
 export function setEndHere(t = app.current): void {
-  const f = frameDuration();
-  const duration = app.info?.duration ?? 0;
-  app.end = Math.min(duration, frameStart(t) + f);
-  if (app.start >= app.end) app.start = Math.max(0, app.end - f);
+  setEnd(frameStart(t) + frameDuration());
 }
 
 engine.onLog((line) => {
@@ -226,8 +239,9 @@ export async function openVideo(file: File): Promise<void> {
     app.input = input;
     app.audioTrack = defaultAudioTrack(info.audio);
     app.current = 0;
+    // No clip chosen yet: the whole video, until a start and end are set.
     app.start = 0;
-    app.end = Math.min(info.duration, 5);
+    app.end = info.duration;
     if (info.unsupported) return;
     progress(null, 'Loading fonts');
     unregisterFonts('embedded');

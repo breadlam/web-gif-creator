@@ -29,6 +29,8 @@ interface Loaded {
   from: number;
   to: number;
   url: string;
+  /** The window runs to the end of the file. */
+  last: boolean;
 }
 
 /**
@@ -83,7 +85,7 @@ export class AudioPreview {
       await this.engine.remove(out);
       this.unload();
       const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'audio/mpeg' }));
-      this.loaded = { track, from, to, url };
+      this.loaded = { track, from, to, url, last: to >= duration - 1e-3 };
       const el = this.el;
       await new Promise<void>((resolve, reject) => {
         el.onloadedmetadata = () => resolve();
@@ -98,6 +100,11 @@ export class AudioPreview {
   /** Source-video time the audio is at, or NaN when nothing is loaded. */
   time(): number {
     return this.loaded && this.el ? this.loaded.from + this.el.currentTime : NaN;
+  }
+
+  /** The sound has played to the end of the file. */
+  finished(): boolean {
+    return !!this.loaded?.last && !!this.el?.ended;
   }
 
   async play(t: number): Promise<void> {

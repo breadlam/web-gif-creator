@@ -123,9 +123,13 @@
     return () => stop();
   });
 
+  /**
+   * Play from the playhead to the clip end. At the end, loop back to the clip start or
+   * stop, depending on "Loop selection". From at or past the end, replay the clip.
+   */
   async function start() {
-    const loopFrom = playback.loop && (app.current < app.start || app.current >= app.end - 0.05);
-    const from = loopFrom ? app.start : app.current;
+    const halfFrame = 0.5 / (app.info?.fps || 25);
+    const from = app.current >= app.end - halfFrame ? app.start : app.current;
     const ffSound = source.mode === 'ffmpeg' && app.audioTrack !== null;
     if (!showVideo && !ffSound) return;
     stepIndex = null;
@@ -180,10 +184,9 @@
     const t = sound.time();
     if (!Number.isNaN(t) && !refilling) {
       app.current = t;
-      if (playback.loop && t >= app.end) {
-        app.current = app.start;
-        if (sound.covers(app.audioTrack!, app.start)) sound.play(app.start);
-        else followSound(app.start);
+      if (t >= app.end - 1e-3 || sound.finished()) {
+        reachedEnd();
+        if (!playback.playing) return;
       } else if (!sound.covers(app.audioTrack!, t)) followSound(t);
       if (now - lastStill > 1500) {
         lastStill = now;
@@ -208,8 +211,28 @@
 
   function onTime(t: number) {
     app.current = t;
-    if (playback.loop && playback.playing && video && t >= app.end) video.currentTime = app.start;
-    else if (playback.playing) followSound(t);
+    if (!playback.playing) return;
+    if (t >= app.end - 1e-3) reachedEnd();
+    else followSound(t);
+  }
+
+  /** Playback hit the clip end (or the end of the video). */
+  function reachedEnd() {
+    if (playback.loop) {
+      if (showVideo && video) {
+        video.currentTime = app.start;
+        if (video.paused) video.play().catch(() => undefined);
+      } else {
+        app.current = app.start;
+      }
+      if (source.mode === 'ffmpeg' && app.audioTrack !== null) {
+        if (sound.covers(app.audioTrack, app.start)) sound.play(app.start).catch(() => undefined);
+        else followSound(app.start);
+      }
+    } else {
+      stop();
+      controls.seek(Math.max(app.start, app.end - (1 / (app.info?.fps || 25))));
+    }
   }
 
   /**
@@ -289,6 +312,11 @@
         onpause={() => {
           playback.playing = false;
           sound.pause();
+        }}
+        onended={() => {
+          // The clip end is the end of the video: loop or stop as at any clip end.
+          playback.playing = true;
+          reachedEnd();
         }}
         onseeked={seeked}
         ontimeupdate={() => video && !hasFrameCallback && !catchingUp() && onTime(video.currentTime)}
