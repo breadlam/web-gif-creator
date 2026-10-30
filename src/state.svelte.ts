@@ -108,10 +108,14 @@ export function frameDuration(): number {
   return 1 / (app.info?.fps || 25);
 }
 
-/** Start time of the source frame shown at time t. */
+/**
+ * Start time of the frame at time t, on the 1/fps grid. Rounds to the nearest boundary:
+ * frame times come from the container, which may store them slightly early (Matroska
+ * stores frame 1 at 30 fps as 0.033, not 0.0333).
+ */
 function frameStart(t: number): number {
   const fps = app.info?.fps || 25;
-  return Math.floor(t * fps + 1e-3) / fps;
+  return Math.round(t * fps) / fps;
 }
 
 /**
@@ -141,6 +145,25 @@ export function setStartHere(t = app.current): void {
 /** End the clip after the frame on screen, so that frame is included. */
 export function setEndHere(t = app.current): void {
   setEnd(frameStart(t) + frameDuration());
+}
+
+/**
+ * Drag the clip start to the frame at t, stopping one frame short of the end. Returns
+ * the start, where the playhead should be so it shows the clip's first frame.
+ */
+export function dragStartTo(t: number): number {
+  app.start = Math.min(Math.max(0, frameStart(t)), app.end - frameDuration());
+  return app.start;
+}
+
+/**
+ * Drag the clip end so the frame at t is the last one included, stopping one frame past
+ * the start. Returns that last frame's time, where the playhead should be.
+ */
+export function dragEndTo(t: number): number {
+  const f = frameDuration();
+  app.end = Math.max(Math.min(app.info?.duration ?? 0, frameStart(t) + f), app.start + f);
+  return app.end - f;
 }
 
 engine.onLog((line) => {

@@ -116,8 +116,10 @@
   }
 
   onMount(() => {
+    let settle: ReturnType<typeof setTimeout> | undefined;
     controls.seek = (t) => {
       const time = Math.max(0, Math.min(duration, t));
+      clearTimeout(settle);
       scrubbing = false;
       app.current = time;
       if (playback.playing) void session?.play(time, onTick);
@@ -129,6 +131,9 @@
       scrubbing = true;
       app.current = time;
       session?.show(time, true);
+      // Holding still mid-drag shows the exact frame, not just the nearest keyframe.
+      clearTimeout(settle);
+      settle = setTimeout(() => scrubbing && session?.show(time), 200);
     };
     controls.step = (n) => {
       if (playback.playing) stop();

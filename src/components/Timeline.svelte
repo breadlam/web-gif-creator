@@ -1,6 +1,8 @@
 <script lang="ts">
   import { formatTime, parseTime } from '../lib/time';
-  import { app, controls, frameDuration, playback, setEnd, setEndHere, setStart, setStartHere } from '../state.svelte';
+  import {
+    app, controls, dragEndTo, dragStartTo, frameDuration, playback, setEnd, setEndHere, setStart, setStartHere,
+  } from '../state.svelte';
 
   const duration = $derived(app.info?.duration ?? 0);
 
@@ -13,8 +15,12 @@
 
   let track: HTMLDivElement | undefined = $state();
   let hover: { x: number; t: number } | null = $state(null);
-  /** While dragging, show keyframes (fast); on release, the exact frame. */
-  let dragging = false;
+  /**
+   * What a drag on the bar moves: the playhead, or the clip start/end marker (with the
+   * playhead following it). While dragging, keyframes are shown (fast); on release, the
+   * exact frame.
+   */
+  let grab: 'playhead' | 'start' | 'end' | null = $state(null);
   let dragTime = 0;
 
   function timeAt(clientX: number): number {
@@ -27,26 +33,29 @@
     return `${(t / (duration || 1)) * 100}%`;
   }
 
-  function down(e: PointerEvent) {
-    dragging = true;
+  function down(e: PointerEvent, what: 'playhead' | 'start' | 'end') {
+    e.stopPropagation();
+    grab = what;
     track?.setPointerCapture(e.pointerId);
     if (playback.playing) controls.toggle();
-    dragTime = timeAt(e.clientX);
+    drag(timeAt(e.clientX));
+  }
+
+  /** Move whatever is grabbed to t; the playhead goes where the marker actually lands. */
+  function drag(t: number) {
+    dragTime = grab === 'start' ? dragStartTo(t) : grab === 'end' ? dragEndTo(t) : t;
     controls.scrub(dragTime);
   }
 
   function move(e: PointerEvent) {
     const r = track!.getBoundingClientRect();
     hover = { x: e.clientX - r.left, t: timeAt(e.clientX) };
-    if (dragging) {
-      dragTime = hover.t;
-      controls.scrub(dragTime);
-    }
+    if (grab) drag(hover.t);
   }
 
   function up() {
-    if (!dragging) return;
-    dragging = false;
+    if (!grab) return;
+    grab = null;
     controls.seek(dragTime);
   }
 
@@ -106,14 +115,34 @@
     aria-valuemax={duration}
     aria-valuenow={app.current}
     aria-valuetext={formatTime(app.current)}
-    onpointerdown={down}
+    onpointerdown={(e) => down(e, 'playhead')}
     onpointermove={move}
     onpointerup={up}
     onpointerleave={() => (hover = null)}
   >
     <div class="range" style:left={pct(app.start)} style:width={pct(app.end - app.start)}></div>
-    <div class="marker start" style:left={pct(app.start)} title="Clip start"></div>
-    <div class="marker end" style:left={pct(app.end)} title="Clip end"></div>
+    <div
+      class="marker start"
+      class:active={grab === 'start'}
+      style:left={pct(app.start)}
+      role="slider"
+      tabindex="-1"
+      aria-label="Clip start"
+      aria-valuenow={app.start}
+      title="Drag to change the clip start"
+      onpointerdown={(e) => down(e, 'start')}
+    ></div>
+    <div
+      class="marker end"
+      class:active={grab === 'end'}
+      style:left={pct(app.end)}
+      role="slider"
+      tabindex="-1"
+      aria-label="Clip end"
+      aria-valuenow={app.end}
+      title="Drag to change the clip end"
+      onpointerdown={(e) => down(e, 'end')}
+    ></div>
     <div class="playhead" style:left={pct(app.current)}></div>
     {#if hover}<div class="hover mono" style:left="{hover.x}px">{formatTime(hover.t, 1)}</div>{/if}
   </div>
@@ -140,7 +169,8 @@
   </div>
 
   <p class="keys muted">
-    Drag the bar to scrub. <kbd>←</kbd><kbd>→</kbd> one frame (hold to scrub), <kbd>Shift</kbd> 1 s ·
+    Drag the bar to scrub, or drag the blue markers to move the clip's start and end.
+    <kbd>←</kbd><kbd>→</kbd> one frame (hold to scrub), <kbd>Shift</kbd> 1 s ·
     <kbd>I</kbd> set start · <kbd>O</kbd> set end · <kbd>Space</kbd> play · <kbd>M</kbd> mute
   </p>
 </div>
@@ -177,7 +207,23 @@
     width: 3px;
     margin-left: -1.5px;
     background: var(--accent);
-    pointer-events: none;
+    cursor: ew-resize;
+    touch-action: none;
+    z-index: 1;
+  }
+  /* A wider, invisible grab area around the thin line. */
+  .marker::before {
+    content: '';
+    position: absolute;
+    top: -4px;
+    bottom: -4px;
+    left: -7px;
+    right: -7px;
+  }
+  .marker:hover,
+  .marker.active {
+    width: 5px;
+    margin-left: -2.5px;
   }
   .marker::after {
     content: '';
