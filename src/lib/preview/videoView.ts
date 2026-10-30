@@ -17,10 +17,20 @@ interface Cached extends Frame {
   bitmap: ImageBitmap;
 }
 
-const AHEAD = 1.5; // seconds of frames to decode past an exact seek, for forward steps
-const BEHIND = 6; // seconds of frames before it to keep cached, for backward steps
+const AHEAD = 1; // seconds of frames to cache past an exact seek, for forward steps
+const BEHIND = 2; // seconds of frames before it to cache, for backward steps
 const CACHE_BYTES = 160 * 1024 * 1024;
 const PLAY_QUEUE = 8;
+
+/**
+ * Whether time t shows this frame. Containers round timestamps (Matroska to the
+ * millisecond) while app times sit on an exact 1/fps grid, so a time up to a quarter frame
+ * before a frame's start counts as that frame.
+ */
+function covers(f: Frame, t: number): boolean {
+  const slack = f.dur * 0.25;
+  return t >= f.ts - slack && t < f.ts + f.dur - slack;
+}
 
 export class VideoView {
   private sink: VideoSampleSink;
@@ -106,18 +116,25 @@ export class VideoView {
         const { t, fast } = this.wanted;
         this.wanted = null;
         const frame = fast ? await this.keyframe(t) : await this.exact(t);
-        if (frame) {
-          this.current = { ts: frame.ts, dur: frame.dur };
-          this.ctx?.drawImage(frame.bitmap, 0, 0, this.width, this.height);
-          // A frame overtaken by a newer jump mustn't move the playhead back (the user may
-          // be about to press Set start). Steps toward a held-key target still report.
-          if (!this.supersededByJump()) this.onFrame(this.current);
-        }
+        if (frame && frame !== this.presented) this.present(frame);
       }
     } finally {
       this.busy = false;
       if (!this.wanted) this.stepTarget = null;
     }
+  }
+
+  private presented: Cached | null = null;
+
+  private present(frame: Cached): void {
+    // A resize may have dropped the cache (and freed this bitmap) while decoding.
+    if (frame.bitmap.width === 0) return;
+    this.presented = frame;
+    this.current = { ts: frame.ts, dur: frame.dur };
+    this.ctx?.drawImage(frame.bitmap, 0, 0, this.width, this.height);
+    // A frame overtaken by a newer jump mustn't move the playhead back (the user may be
+    // about to press Set start). Steps toward a held-key target still report.
+    if (!this.supersededByJump()) this.onFrame(this.current);
   }
 
   /** A newer show() arrived while decoding (a method, so TypeScript doesn't narrow it away). */
@@ -126,8 +143,7 @@ export class VideoView {
   }
 
   private findCached(t: number): Cached | undefined {
-    // A tiny tolerance so a target exactly on a frame boundary lands on that frame.
-    return this.cache.find((c) => t >= c.ts - 1e-4 && t < c.ts + c.dur - 1e-4);
+    return this.cache.find((c) => covers(c, t));
   }
 
   private store(sample: VideoSample): Cached | null {
@@ -163,12 +179,19 @@ export class VideoView {
       p = await this.packets.getNextPacket(p);
       if (p && p.type === 'key' && p.timestamp > media + AHEAD) break;
     }
-    const keep = stamps.filter((s) => s >= media - BEHIND && s <= media + AHEAD).sort((a, b) => a - b);
+    // Cache a window around t that fits the memory budget. Frames between the keyframe and
+    // the window are still decoded (they have to be) but not kept.
+    const budget = this.maxCached / this.fps;
+    const before = Math.min(BEHIND, budget * 0.6);
+    const after = Math.min(AHEAD, budget * 0.3);
+    const keep = stamps.filter((s) => s >= media - before && s <= media + after).sort((a, b) => a - b);
     if (!keep.length) keep.push(media);
     for await (const sample of this.sink.samplesAtTimestamps(keep)) {
       if (!sample) continue;
-      this.store(sample);
+      const entry = this.store(sample);
       sample.close();
+      // Show the target as soon as it's decoded; the frames after it fill the cache.
+      if (entry && entry !== this.presented && covers(entry, t)) this.present(entry);
       if (this.wanted && !this.wanted.fast && this.findCached(this.wanted.t)) break;
     }
     this.evict(t);
@@ -190,7 +213,8 @@ export class VideoView {
     if (!sample) return null;
     const entry = this.store(sample);
     sample.close();
-    this.evict(t);
+    // Evict around the keyframe itself: it can lie well before t, and must survive.
+    if (entry) this.evict(entry.ts);
     return entry;
   }
 
